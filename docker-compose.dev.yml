@@ -37,7 +37,11 @@ services:
     image: node:18-alpine
     container_name: nextjs_app_qayim_dev
     working_dir: /app
-    command: sh -c "npm install && npx prisma generate && npm run dev"
+    # Change: Only run npm install if node_modules is missing to save time
+    command: >
+      sh -c "if [ ! -d 'node_modules' ]; then npm install; fi && 
+             npx prisma generate && 
+             npm run dev -- -p 9002" 
     ports:
       - "9002:9002"
     volumes:
