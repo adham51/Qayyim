@@ -20,7 +20,7 @@ const gradeData = [
   { name: 'B', count: 25 },
   { name: 'C', count: 18 },
   { name: 'D', count: 5 },
-  { name: 'F', count: 2 },
+  { name: 'F', count: 20 },
 ];
 
 export default function TeacherDashboard() {
