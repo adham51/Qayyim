@@ -5,12 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/page-header";
-import { FileCheck2, Loader2 } from "lucide-react";
+import { FileCheck2, Loader2, Sparkles } from "lucide-react";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { FileUpload } from "@/components/file-upload";
 import { FILE_UPLOAD, MESSAGES } from "@/lib/constants";
 import { useToast } from "@/hooks/use-toast";
 import { FileRejection } from "react-dropzone";
+import { Textarea } from "@/components/ui/textarea";
 
 
 interface Exam {
@@ -30,6 +31,13 @@ export default function UploadSubmissionsPage() {
   const [selectedExamId, setSelectedExamId] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [rejectedFiles, setRejectedFiles] = useState<FileRejection[]>([]);
+
+  // AI Grading fields
+  const [question, setQuestion] = useState("");
+  const [studentAnswer, setStudentAnswer] = useState("");
+  const [modelAnswer, setModelAnswer] = useState("");
+  const [isGrading, setIsGrading] = useState(false);
+  const [gradingResult, setGradingResult] = useState<any>(null);
 
   useEffect(() => {
     const fetchExams = async () => {
@@ -51,6 +59,43 @@ export default function UploadSubmissionsPage() {
     };
     fetchExams();
   }, []);
+
+ const handleGradeWithAI = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setError(null);
+  setIsGrading(true);
+  
+  try {
+    if (!question.trim()) throw new Error("Please enter a question");
+    if (!studentAnswer.trim()) throw new Error("Please enter the student answer");
+    if (!modelAnswer.trim()) throw new Error("Please enter the model answer");
+
+    const response = await fetch("http://localhost:5000/grade", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        question,
+        student_answer: studentAnswer,
+        model_answer: modelAnswer,
+      }),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Failed to grade answer");
+    }
+
+    setGradingResult(data);
+    toast({
+      title: "Grading Complete!",
+      description: "AI has graded the student answer.",
+    });
+  } catch (err) {
+    setError(err instanceof Error ? err.message : "Grading failed");
+  } finally {
+    setIsGrading(false);
+  }
+};
 
  const handleSubmit = async (e: React.FormEvent) => {
   e.preventDefault();
@@ -217,6 +262,111 @@ export default function UploadSubmissionsPage() {
           </Button>
         </div>
       </form>
+
+      {/* AI Grading Section */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-headline">AI Quick Grading</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleGradeWithAI} className="grid gap-6">
+            <div className="grid gap-2">
+              <Label htmlFor="question">Question</Label>
+              <Textarea
+                id="question"
+                placeholder="Enter the exam question..."
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                className="min-h-[100px]"
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="student-answer">Student Answer</Label>
+              <Textarea
+                id="student-answer"
+                placeholder="Enter the student's answer..."
+                value={studentAnswer}
+                onChange={(e) => setStudentAnswer(e.target.value)}
+                className="min-h-[100px]"
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="model-answer">Model Answer (Reference)</Label>
+              <Textarea
+                id="model-answer"
+                placeholder="Enter the expected/model answer..."
+                value={modelAnswer}
+                onChange={(e) => setModelAnswer(e.target.value)}
+                className="min-h-[100px]"
+              />
+            </div>
+
+            <div className="flex justify-end">
+              <Button 
+                size="lg" 
+                type="submit" 
+                disabled={isGrading || !question.trim() || !studentAnswer.trim() || !modelAnswer.trim()}
+              >
+                {isGrading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Grading...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="mr-2 h-4 w-4" /> Grade with AI
+                  </>
+                )}
+              </Button>
+            </div>
+          </form>
+
+          {/* Grading Result */}
+          {gradingResult && (
+            <div className="mt-6 rounded-lg border border-blue-200 bg-blue-50 p-4">
+              <h3 className="font-semibold text-blue-900 mb-3">Grading Result</h3>
+              
+              {gradingResult.response ? (
+                <div className="space-y-3">
+                  <div>
+                    <span className="font-semibold text-sm">Grade:</span>
+                    <p className="text-lg font-bold text-blue-600">
+                      {(gradingResult.response.grade * 100).toFixed(0)}%
+                    </p>
+                  </div>
+                  <div>
+                    <span className="font-semibold text-sm">Feedback:</span>
+                    <p className="text-sm text-gray-700">{gradingResult.response.feedback}</p>
+                  </div>
+                  {gradingResult.method && (
+                    <div className="text-xs text-gray-500 pt-2 border-t border-blue-200">
+                      Method: {gradingResult.method}
+                    </div>
+                  )}
+                </div>
+              ) : gradingResult.grade !== undefined ? (
+                <div className="space-y-3">
+                  <div>
+                    <span className="font-semibold text-sm">Grade:</span>
+                    <p className="text-lg font-bold text-blue-600">
+                      {(gradingResult.grade * 100).toFixed(0)}%
+                    </p>
+                  </div>
+                  <div>
+                    <span className="font-semibold text-sm">Feedback:</span>
+                    <p className="text-sm text-gray-700">{gradingResult.feedback}</p>
+                  </div>
+                </div>
+              ) : (
+                <pre className="text-xs bg-white p-3 rounded border border-blue-100 overflow-auto max-h-[200px]">
+                  {JSON.stringify(gradingResult, null, 2)}
+                </pre>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

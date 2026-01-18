@@ -1,23 +1,15 @@
-version: '3.8'
-
 services:
   mysql:
     image: mysql:8.0
     container_name: mysql_db_qayim
     restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-Jeffxddowdowdow1234}
-      MYSQL_DATABASE: qayyim_db
+      MYSQL_ROOT_PASSWORD: Jeffxddowdowdow1234   # Match the password in your .env
+      MYSQL_DATABASE: qayyim_db                   # Set this to the same value as in your .env (qayyim_db)
     ports:
-      - "3307:3306"
+      - "3307:3306"  # Port 3307 on host to 3306 in container
     volumes:
-      - mysql_data:/var/lib/mysql
-      - ./init-db:/docker-entrypoint-initdb.d
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-Jeffxddowdowdow1234}"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
+      - mysql_data2:/var/lib/mysql
 
   phpmyadmin:
     image: phpmyadmin/phpmyadmin
@@ -25,51 +17,12 @@ services:
     restart: always
     environment:
       PMA_HOST: mysql
-      PMA_USER: root
-      PMA_PASSWORD: ${MYSQL_ROOT_PASSWORD:-Jeffxddowdowdow1234}
+      PMA_USER: root                           # Match the user in your .env (root or user)
+      PMA_PASSWORD: Jeffxddowdowdow1234           # Password from your .env
     ports:
-      - "8080:80"
+      - "8080:80"  # Access phpMyAdmin on localhost:8080
     depends_on:
-      mysql:
-        condition: service_healthy
-
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        DATABASE_URL: ${DATABASE_URL}
-        RESEND_API: ${RESEND_API}
-        JWT_SECRET: ${JWT_SECRET}
-        AWS_REGION: ${AWS_REGION}
-        AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-        AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-        AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
-        AWS_S3_ENDPOINT: ${AWS_S3_ENDPOINT}
-    container_name: nextjs_app_qayim
-    restart: always
-    ports:
-      - "9002:3000"
-    environment:
-      DATABASE_URL: ${DATABASE_URL}
-      NODE_ENV: production
-      RESEND_API: ${RESEND_API}
-      JWT_SECRET: ${JWT_SECRET}
-      AWS_REGION: ${AWS_REGION}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
-      AWS_S3_ENDPOINT: ${AWS_S3_ENDPOINT}
-    depends_on:
-      mysql:
-        condition: service_healthy
-    command: >
-      sh -c "
-        echo '✅ Waiting for database...' &&
-        echo '✅ Database initialized from SQL dump - tables and data ready!' &&
-        echo '✅ Starting Next.js application...' &&
-        node server.js
-      "
+      - mysql
 
 volumes:
-  mysql_data:
+  mysql_data2:

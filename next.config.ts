@@ -1,8 +1,9 @@
-import type {NextConfig} from 'next';
+import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  /* config options here */
-  output: 'standalone', // THIS IS CRITICAL FOR DOCKER
+  // Only use standalone for production builds
+  output: process.env.NODE_ENV === 'production' ? 'standalone' : undefined,
+  
   typescript: {
     ignoreBuildErrors: true,
   },
@@ -18,6 +19,12 @@ const nextConfig: NextConfig = {
         pathname: '/**',
       },
     ],
+  },
+  // This is the fix for Hot Reloading on Windows/Docker
+  experimental: {
+    watchOptions: {
+      pollIntervalMs: 1000,
+    },
   },
 };
 
