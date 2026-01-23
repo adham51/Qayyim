@@ -65,17 +65,17 @@ model Course {
 model Exam {
   id              String    @id @default(cuid())
   title           String
-  description     String?   @db.Text
+  // description     String?   @db.Text
   duration        Int?      @db.UnsignedInt
-  totalMarks      Int?      @db.UnsignedInt
+  // totalMarks      Int?      @db.UnsignedInt
   questions       Json? // {question, model_answer, points, type}
   type            ExamType
-  deadline        DateTime?
-  modelAnswer     String?   @db.Text
-  rubric          String?   @db.Text
-  rubricLink      String?
+  examDate        DateTime?
+  // modelAnswer     String?   @db.Text
+  // rubric          String?   @db.Text
+  // rubricLink      String?
   modelAnswerFile String?
-  rubricFile      String?
+  // rubricFile      String?
   isActive        Boolean   @default(true)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -96,9 +96,9 @@ model Exam {
 
 model Submission {
   id              String           @id @default(cuid())
-  originalAnswers Json // {answer, points}
-  marks           Int?             @db.UnsignedInt
-  feedback        String?          @db.Text
+  originalAnswers Json
+  // marks           Int?             @db.UnsignedInt
+  // feedback        String?          @db.Text
   status          SubmissionStatus @default(PENDING)
   gradedAt        DateTime?
   createdAt       DateTime         @default(now())
@@ -107,9 +107,9 @@ model Submission {
 
   // Relations
   studentId String
-  student   Student     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  student   Student    @relation(fields: [studentId], references: [id], onDelete: Cascade)
   examId    String
-  exam      Exam        @relation(fields: [examId], references: [id], onDelete: Cascade)
+  exam      Exam       @relation(fields: [examId], references: [id], onDelete: Cascade)
   grievance Grievance?
 
   @@unique([studentId, examId])

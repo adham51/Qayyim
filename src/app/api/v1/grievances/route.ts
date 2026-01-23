@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
 // GET - List grievances (Teacher)
 export async function GET(request: NextRequest) {
   try {
-    const authUser = requireRole(request, 'TEACHER');
+    const authUser = requireRole(request, 'instructor');
     
     // Get instructor record
     const instructor = await prisma.instructor.findUnique({

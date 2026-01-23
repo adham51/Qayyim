@@ -8,7 +8,7 @@ export async function GET(
   { params }: { params: { examId: string } }
 ) {
   try {
-    const authUser = requireRole(request, 'TEACHER');
+    const authUser = requireRole(request, 'instructor');
     
     // Get instructor
     const instructor = await prisma.instructor.findUnique({

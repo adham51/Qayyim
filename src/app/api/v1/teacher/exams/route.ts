@@ -9,7 +9,7 @@ import { FILE_UPLOAD, MESSAGES } from '@/lib/constants';
 // GET - List all exams for the instructor (formerly teacher)
 export async function GET(request: NextRequest) {
   try {
-    const authUser = requireRole(request, 'TEACHER');
+    const authUser = requireRole(request, 'instructor');
     
     const instructor = await prisma.instructor.findUnique({
       where: { userId: authUser.userId }  // Find instructor by User ID
@@ -78,9 +78,8 @@ export async function GET(request: NextRequest) {
       return {
         id: exam.id,
         title: exam.title,
-        description: exam.description,
         type: exam.type,
-        deadline: exam.deadline,
+        examDate: exam.examDate,
         createdAt: exam.createdAt,
         updatedAt: exam.updatedAt,
         courseCode: exam.course?.courseCode || null,
@@ -102,7 +101,7 @@ export async function GET(request: NextRequest) {
 // POST - Create a new exam with S3 upload
 export async function POST(request: NextRequest) {
   try {
-    const authUser = requireRole(request, 'TEACHER');
+    const authUser = requireRole(request, 'instructor');
     
     // Parse FormData
     const formData = await request.formData();
@@ -124,9 +123,9 @@ export async function POST(request: NextRequest) {
     const body = {
       title: formData.get('title') as string,
       description: courseTopic || null, // Use courseTopic as description if provided
-      type: formData.get('examType') as string,
-      deadline: formData.get('deadline') as string | null,
-      rubric: formData.get('rubricText') as string | null,
+      type: formData.get('type') as string,
+      examDate: formData.get('examDate') as string | null,
+      questions: formData.get('questions') as string,
     };
     
     // Validate - adjust your createExamSchema to match these fields only
@@ -146,10 +145,9 @@ export async function POST(request: NextRequest) {
     const exam = await prisma.exam.create({
       data: {
         title: validatedData.title,
-        description: validatedData.description,
         type: validatedData.type,
-        deadline: validatedData.deadline ? new Date(validatedData.deadline) : null,
-        rubric: validatedData.rubric,
+        questions: validatedData.questions,
+        examDate: validatedData.examDate ? new Date(validatedData.examDate) : null,
         instructorId: instructor.id,
         courseId: courseId || null, // Link exam to course if provided
       },

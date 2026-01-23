@@ -20,13 +20,16 @@ export const forgotPasswordSchema = z.object({
 
 
 export const createExamSchema = z.object({
-  title: z.string().min(1, 'Title is required'),
-  description: z.string().optional(),
-  type: z.enum(['MCQ', 'TRUE_FALSE', 'SHORT_ANSWER', 'MIXED']),
-  deadline: z.string().optional().nullable(), // REMOVE .datetime()
-  modelAnswer: z.string().optional(),
-  rubric: z.string().optional().nullable(), // ADD .nullable()
+  title: z.string().min(1, "Title is required"),
+  description: z.string().optional().nullable(),
+  type: z.enum(["MCQ", "TRUE_FALSE", "SHORT_ANSWER", "MIXED"]),
+  duration: z.number().optional().nullable(),
+  questions: z.any().optional().nullable(),
+  examDate: z.string().optional().nullable(),
+  modelAnswerFile: z.string().optional().nullable(),
+  isActive: z.boolean().optional().default(true),
 });
+
 
 export const updateExamSchema = createExamSchema.partial();
 

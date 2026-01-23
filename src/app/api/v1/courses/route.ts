@@ -9,7 +9,7 @@ export async function GET(request: NextRequest) {
     // Get authenticated instructor
     let instructor = null;
     try {
-      const authUser = requireRole(request, 'TEACHER');
+      const authUser = requireRole(request, 'instructor');
       instructor = await prisma.instructor.findUnique({
         where: { userId: authUser.userId },
       });

@@ -14,6 +14,8 @@ import { FileUpload } from "@/components/file-upload";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+// Import the service we updated [cite: 1, 2]
+import { saveExam } from "@/services/teacherExamService";
 
 interface Course {
   id: string;
@@ -32,13 +34,12 @@ export default function CreateExamPage() {
   const [error, setError] = useState<string | null>(null);
   const [courses, setCourses] = useState<Course[]>([]);
   const [loadingCourses, setLoadingCourses] = useState(true);
-  
+
   // Form state
   const [title, setTitle] = useState("");
   const [selectedCourseId, setSelectedCourseId] = useState<string>("");
   const [examType, setExamType] = useState<string>("");
   const [deadline, setDeadline] = useState("");
-  const [rubricText, setRubricText] = useState("");
   const [modelAnswerFiles, setModelAnswerFiles] = useState<File[]>([]);
 
   // Fetch courses on component mount
@@ -48,12 +49,12 @@ export default function CreateExamPage() {
         setLoadingCourses(true);
         const token = localStorage.getItem('token');
         if (!token) return;
-        
+
         const res = await fetch("/api/v1/courses", {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json();
-        
+
         if (res.ok && data.data?.flatCourses) {
           setCourses(data.data.flatCourses);
         }
@@ -63,7 +64,7 @@ export default function CreateExamPage() {
         setLoadingCourses(false);
       }
     };
-    
+
     fetchCourses();
   }, []);
 
@@ -73,212 +74,157 @@ export default function CreateExamPage() {
     setIsSubmitting(true);
 
     try {
-      // Validation
-      if (!title.trim()) {
-        throw new Error("Exam title is required");
-      }
-      if (!selectedCourseId) {
-        throw new Error("Please select a course");
-      }
-      if (!examType) {
-        throw new Error("Exam type is required");
-      }
+      // 1) Validation
+      if (!title.trim()) throw new Error("Exam title is required");
+      if (!selectedCourseId) throw new Error("Please select a course");
+      if (!examType) throw new Error("Exam type is required");
+      if (modelAnswerFiles.length === 0) throw new Error("Please upload a model answer PDF for extraction");
 
-      // Get selected course for description
+      // 2) Prepare metadata for the service
       const selectedCourse = courses.find(c => c.id === selectedCourseId);
-      const courseTopic = selectedCourse 
-        ? `${selectedCourse.courseCode} - ${selectedCourse.courseName}`
-        : "";
+      const examMeta = {
+        title,
+        type: examType, // Must match "MCQ", "TRUE_FALSE", etc. [cite: 4]
+        examDate: deadline || null,
+        description: selectedCourse
+            ? `${selectedCourse.courseCode} - ${selectedCourse.courseName}`
+            : null,
+        courseId: selectedCourseId,
+      };
 
-      // Create FormData
-      const formData = new FormData();
-      formData.append("title", title);
-      formData.append("courseId", selectedCourseId);
-      formData.append("courseTopic", courseTopic); // Keep for backward compatibility/description
-      formData.append("examType", examType);
-      
-      if (deadline) {
-        formData.append("deadline", deadline);
-      }
-      
-      if (rubricText.trim()) {
-        formData.append("rubricText", rubricText);
-      }
-      
-      // Add model answer file (only first file if multiple)
-      if (modelAnswerFiles.length > 0) {
-        formData.append("modelAnswerFile", modelAnswerFiles[0]);
-      }
+      // 3) Call the integrated saveExam service [cite: 1, 2, 5]
+      // This function handles: OCR -> AI Extraction -> S3 Upload -> Database Save
+      await saveExam(modelAnswerFiles[0], examMeta);
 
-      // Get token from localStorage
-    const token = localStorage.getItem('token');
-
-    if (!token) {
-      throw new Error('Not logged in');
-    }
-
-    // Submit to API with Authorization header
-    const response = await fetch("/api/v1/teacher/exams", { 
-      method: "POST",
-      headers: {
-        'Authorization': `Bearer ${token}`,
-      },
-      body: formData,
-      credentials: 'include',
-    });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to create exam");
-      }
-
-      // Show success toast
+      // 4) Success Handling
       toast({
         title: "Exam Created Successfully!",
-        description: `Exam "${title}" has been created successfully.`,
+        description: `Exam "${title}" has been processed and saved.`,
       });
 
-      // Redirect after a short delay so user can see the success message
-        router.push("/teacher/exams");
-        router.refresh();
-      
+      router.push("/teacher/exams");
+      router.refresh();
+
     } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred");
+      setError(err instanceof Error ? err.message : "An error occurred during exam creation");
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to create exam",
+      });
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="flex flex-1 flex-col gap-4 p-4 md:gap-8 md:p-6">
-      <PageHeader
-        title="Create New Exam"
-        description="Fill out the details below to create a new exam."
-      />
-      
-      <form onSubmit={handleSubmit} className="grid gap-6">
-        {error && (
-          <div className="rounded-md bg-destructive/10 p-4 text-sm text-destructive">
-            {error}
-          </div>
-        )}
+      <div className="flex flex-1 flex-col gap-4 p-4 md:gap-8 md:p-6">
+        <PageHeader
+            title="Create New Exam"
+            description="Upload your exam PDF. Our AI will automatically extract questions and model answers."
+        />
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="font-headline">Exam Details</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4 md:grid-cols-2">
-            <div className="grid gap-2">
-              <Label htmlFor="exam-title">Exam Title</Label>
-              <Input 
-                id="exam-title" 
-                placeholder="e.g., Data Structures Midterm" 
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                required
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="course">Course</Label>
-              <Select 
-                value={selectedCourseId} 
-                onValueChange={setSelectedCourseId}
-                required
-                disabled={loadingCourses}
-              >
-                <SelectTrigger id="course">
-                  <SelectValue placeholder={loadingCourses ? "Loading courses..." : "Select a course"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {courses.length > 0 ? (
-                    courses.map((course) => (
-                      <SelectItem key={course.id} value={course.id}>
-                        {course.courseCode} - {course.courseName} ({course.sectionType} {course.sectionNumber})
-                      </SelectItem>
-                    ))
-                  ) : (
-                    <SelectItem value="no-courses" disabled>
-                      No courses available
-                    </SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
-              {selectedCourseId && (
-                <p className="text-xs text-muted-foreground">
-                  Selected: {courses.find(c => c.id === selectedCourseId)?.courseCode} - {courses.find(c => c.id === selectedCourseId)?.courseName}
-                </p>
+        <form onSubmit={handleSubmit} className="grid gap-6">
+          {error && (
+              <div className="rounded-md bg-destructive/10 p-4 text-sm text-destructive">
+                {error}
+              </div>
+          )}
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="font-headline">Exam Details</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-2">
+                <Label htmlFor="exam-title">Exam Title</Label>
+                <Input
+                    id="exam-title"
+                    placeholder="e.g., Data Structures Midterm"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    required
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="course">Course</Label>
+                <Select
+                    value={selectedCourseId}
+                    onValueChange={setSelectedCourseId}
+                    required
+                    disabled={loadingCourses}
+                >
+                  <SelectTrigger id="course">
+                    <SelectValue placeholder={loadingCourses ? "Loading courses..." : "Select a course"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {courses.map((course) => (
+                        <SelectItem key={course.id} value={course.id}>
+                          {course.courseCode} - {course.courseName}
+                        </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="exam-type">Exam Type</Label>
+                <Select value={examType} onValueChange={setExamType} required>
+                  <SelectTrigger id="exam-type">
+                    <SelectValue placeholder="Select exam type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="MCQ">MCQ</SelectItem>
+                    <SelectItem value="TRUE_FALSE">True/False</SelectItem>
+                    <SelectItem value="SHORT_ANSWER">Short Answer</SelectItem>
+                    <SelectItem value="MIXED">Mixed</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="deadline">Exam Date / Deadline</Label>
+                <Input
+                    id="deadline"
+                    type="date"
+                    value={deadline}
+                    onChange={(e) => setDeadline(e.target.value)}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="font-headline">AI Extraction</CardTitle>
+              <CardDescription>Upload the PDF containing questions and answers. The AI will parse these for grading.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-6">
+              <div className="grid gap-2">
+                <Label>Upload Model Answers (PDF)</Label>
+                <FileUpload
+                    maxFiles={1}
+                    onFilesChange={setModelAnswerFiles}
+                    value={modelAnswerFiles}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" asChild type="button">
+              <Link href="/teacher/exams">Cancel</Link>
+            </Button>
+            <Button type="submit" disabled={isSubmitting}>
+              {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Processing AI Extraction...
+                  </>
+              ) : (
+                  "Create & Extract Exam"
               )}
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="exam-type">Exam Type</Label>
-              <Select value={examType} onValueChange={setExamType} required>
-                <SelectTrigger id="exam-type">
-                  <SelectValue placeholder="Select exam type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="MCQ">MCQ</SelectItem>
-                  <SelectItem value="TRUE_FALSE">True/False</SelectItem>
-                  <SelectItem value="SHORT_ANSWER">Short Answer</SelectItem>
-                  <SelectItem value="MIXED">Mixed</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="deadline">Deadline (Optional)</Label>
-              <Input 
-                id="deadline" 
-                type="date" 
-                value={deadline}
-                onChange={(e) => setDeadline(e.target.value)}
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="font-headline">Model Answers & Rubric</CardTitle>
-            <CardDescription>Provide the correct answers and grading criteria.</CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-6">
-            <div className="grid gap-2">
-              <Label>Upload Model Answers (PDF)</Label>
-              <FileUpload 
-                maxFiles={1}
-                onFilesChange={setModelAnswerFiles}
-                value={modelAnswerFiles}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="rubric">Or, enter rubric manually</Label>
-              <Textarea 
-                id="rubric" 
-                placeholder="Describe the grading rubric..." 
-                className="min-h-[150px]" 
-                value={rubricText}
-                onChange={(e) => setRubricText(e.target.value)}
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" asChild type="button">
-            <Link href="/teacher/exams">Cancel</Link>
-          </Button>
-          <Button type="submit" disabled={isSubmitting}>
-            {isSubmitting ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Creating...
-              </>
-            ) : (
-              "Create Exam"
-            )}
-          </Button>
-        </div>
-      </form>
-    </div>
+            </Button>
+          </div>
+        </form>
+      </div>
   );
 }

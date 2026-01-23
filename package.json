@@ -11,6 +11,9 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
   },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.946.0",
     "@aws-sdk/s3-request-presigner": "^3.946.0",
@@ -42,6 +45,7 @@
     "@react-email/render": "^1.4.0",
     "bcrypt": "^6.0.0",
     "class-variance-authority": "^0.7.1",
+    "@google/generative-ai": "^0.21.0",
     "clsx": "^2.1.1",
     "csv-writer": "^1.6.0",
     "date-fns": "^3.6.0",
@@ -74,6 +78,8 @@
     "postcss": "^8",
     "prisma": "^6.19.1",
     "tailwindcss": "^3.4.1",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
     "typescript": "^5"
   }
 }

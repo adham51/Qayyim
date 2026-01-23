@@ -24,6 +24,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { LogOut, User } from "lucide-react"
 import { Logo } from "./logo"
+import {getCurrentUser} from "@/services/authService";
 
 export type NavItem = {
   href: string;
@@ -37,6 +38,8 @@ type AppLayoutProps = {
   children: React.ReactNode;
   role: "teacher" | "student";
 };
+
+const currentUser = await getCurrentUser();
 
 export default function AppLayout({ navItems, children, role }: AppLayoutProps) {
   const pathname = usePathname();
@@ -108,8 +111,8 @@ function UserMenu({ role }: { role: "teacher" | "student" }) {
                       <AvatarFallback>{role === 'teacher' ? 'T' : 'S'}</AvatarFallback>
                     </Avatar>
                     <div className="flex flex-col">
-                        <span className="font-medium">{role === 'teacher' ? 'Teacher Name' : 'Student Name'}</span>
-                        <span className="text-xs text-muted-foreground">{role === 'teacher' ? 'teacher@example.com' : 'student@example.com'}</span>
+                        <span className="font-medium">{currentUser.name}</span>
+                        <span className="text-xs text-muted-foreground">{currentUser.email}</span>
                     </div>
                 </Button>
             </DropdownMenuTrigger>
