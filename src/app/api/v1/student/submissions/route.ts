@@ -7,7 +7,7 @@ import { successResponse, errorResponse, handleApiError } from '@/lib/api-respon
 // GET - Get student submissions (for grievance form)
 export async function GET(request: NextRequest) {
   try {
-    const authUser = requireRole(request, 'STUDENT');
+    const authUser = requireRole(request, 'student');
     
     // Get student record
     const student = await prisma.student.findUnique({
@@ -29,7 +29,6 @@ export async function GET(request: NextRequest) {
           select: {
             id: true,
             title: true,
-            description: true,
           },
         },
         grievance: {
@@ -58,10 +57,8 @@ export async function GET(request: NextRequest) {
         exam: {
           id: sub.exam.id,
           title: sub.exam.title,
-          description: sub.exam.description,
         },
         marks: sub.marks,
-        feedback: sub.feedback,
         gradedAt: sub.gradedAt,
         status: sub.status, // Include status to show if graded or pending
       }));
@@ -74,7 +71,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const authUser = requireRole(request, 'STUDENT');
+    const authUser = requireRole(request, 'student');
     const body = await request.json();
     
     // Validate input

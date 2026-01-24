@@ -7,7 +7,7 @@ import { successResponse, errorResponse, handleApiError } from '@/lib/api-respon
 // POST - Submit a grievance (Student)
 export async function POST(request: NextRequest) {
   try {
-    const authUser = requireRole(request, 'STUDENT');
+    const authUser = requireRole(request, 'student');
     const body = await request.json();
     
     // Validate input
@@ -97,14 +97,12 @@ export async function GET(request: NextRequest) {
           select: {
             id: true,
             title: true,
-            description: true,
           },
         },
         submission: {
           select: {
             id: true,
             marks: true,
-            feedback: true,
             status: true,
           },
         },

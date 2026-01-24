@@ -143,14 +143,22 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    // Calculate total marks
-    const totalMarks = finalAnswers.reduce((sum: number, ans: any) => sum + (ans.studentGrade || 0), 0);
+    // Calculate total marks: sum of (studentGrade * questionGrade) for each question
+    const totalMarks = finalAnswers.reduce((sum: number, ans: any) => {
+      const earnedMarks = (ans.studentGrade || 0) * (ans.questionGrade || 0);
+      return sum + earnedMarks;
+    }, 0);
+
+    // Calculate maximum possible marks for percentage
+    const maxMarks = finalAnswers.reduce((sum: number, ans: any) => {
+      return sum + (ans.questionGrade || 0);
+    }, 0);
 
     // Step 7: Upload to S3
     const buffer = Buffer.from(await file.arrayBuffer());
     const s3Url = await uploadStudentAnswer(examId, studentUserId, buffer);
 
-    // Step 8: Save to database with grading results
+    // Step 8: Save to database with grading results and calculated marks
     const submission = await prisma.submission.upsert({
       where: {
         studentId_examId: {
@@ -161,6 +169,7 @@ export async function POST(request: NextRequest) {
       update: {
         fileLink: s3Url,
         originalAnswers: finalAnswers,
+        marks: totalMarks,  // Save calculated marks
         status: 'GRADED',
         gradedAt: new Date(),
         updatedAt: new Date(),
@@ -170,6 +179,7 @@ export async function POST(request: NextRequest) {
         examId,
         fileLink: s3Url,
         originalAnswers: finalAnswers,
+        marks: totalMarks,  // Save calculated marks
         status: 'GRADED',
         gradedAt: new Date(),
       },
@@ -183,6 +193,8 @@ export async function POST(request: NextRequest) {
             studentUserId,
             examId,
             totalMarks,
+            maxMarks,
+            percentage: maxMarks > 0 ? ((totalMarks / maxMarks) * 100).toFixed(2) : 0,
             totalQuestions: finalAnswers.length,
           },
           s3Upload: {

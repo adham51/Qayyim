@@ -54,3 +54,43 @@ export interface SubmissionDetail {
         rubric: string | null;
     };
 }
+
+export interface Course {
+    id: string;
+    courseCode: string;
+    courseName: string;
+    sectionType: 'LECTURE' | 'LAB' | 'TUTORIAL';
+    sectionNumber: string;
+    academicYear: string;
+    semester: 'FALL' | 'SPRING' | 'SUMMER';
+    isActive: boolean;
+}
+
+export interface CourseContent {
+    totalExams: number;
+    averageMarks: number;
+    course: {
+        id: string;
+        courseCode: string;
+        courseName: string;
+        sectionType: 'LECTURE' | 'LAB' | 'TUTORIAL';
+        sectionNumber: string;
+        academicYear: string;
+        semester: 'FALL' | 'SPRING' | 'SUMMER';
+        exams: {
+            id: string;
+            title: string;
+            type: 'MCQ' | 'TRUE_FALSE' | 'SHORT_ANSWER' | 'MIXED';
+            duration: number | null;
+            examDate: Date | string | null;
+            isActive: boolean;
+            submissions: {
+                id: string;
+                marks: number | null;
+                status: 'PENDING' | 'GRADED';
+                gradedAt: Date | string | null;
+                fileLink: string;
+            }[];
+        }[];
+    };
+}

@@ -10,7 +10,7 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const authUser = requireRole(request, 'TEACHER');
+    const authUser = requireRole(request, 'instructor');
     
     const grievance = await prisma.grievance.findUnique({
       where: { id: params.id },
@@ -30,7 +30,6 @@ export async function GET(
           select: {
             id: true,
             title: true,
-            description: true,
             instructorId: true,
           },
         },
@@ -39,7 +38,6 @@ export async function GET(
             id: true,
             originalAnswers: true,
             marks: true,
-            feedback: true,
             status: true,
             createdAt: true,
             gradedAt: true,
@@ -73,7 +71,7 @@ export async function PATCH(
   { params }: { params: { id: string } }
 ) {
   try {
-    const authUser = requireRole(request, 'TEACHER');
+    const authUser = requireRole(request, 'instructor');
     const body = await request.json();
     
     // Validate input

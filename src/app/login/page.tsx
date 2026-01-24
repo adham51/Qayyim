@@ -50,7 +50,7 @@ export default function LoginPage() {
             }
 
             // Redirect based on role
-            if (userRole === "STUDENT") {
+            if (userRole === "student") {
                 router.push("/student/dashboard");
             } else if (userRole === "instructor") {
                 router.push("/teacher/dashboard");

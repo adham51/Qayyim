@@ -97,7 +97,7 @@ model Exam {
 model Submission {
   id              String           @id @default(cuid())
   originalAnswers Json
-  // marks           Int?             @db.UnsignedInt
+  marks           Float?           @db.Double
   // feedback        String?          @db.Text
   status          SubmissionStatus @default(PENDING)
   gradedAt        DateTime?
