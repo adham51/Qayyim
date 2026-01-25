@@ -37,7 +37,7 @@ export type NavItem = {
     href: string
     label: string
     icon: LucideIcon
-    badge?: string
+    badge?: string  //  /api/v1/auth/login
 }
 
 type AppLayoutProps = {

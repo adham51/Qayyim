@@ -6,7 +6,6 @@ import { successResponse, handleApiError } from '@/lib/api-response';
 // GET - List courses for the authenticated instructor
 export async function GET(request: NextRequest) {
   try {
-    // Get authenticated instructor
     let instructor = null;
     try {
       const authUser = requireRole(request, 'instructor');
@@ -14,7 +13,6 @@ export async function GET(request: NextRequest) {
         where: { userId: authUser.userId },
       });
     } catch (error) {
-      // If not authenticated or not a teacher, return empty list
       return successResponse({
         courses: [],
         flatCourses: [],
