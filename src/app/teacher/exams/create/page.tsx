@@ -7,14 +7,12 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import Link from "next/link";
 import { FileUpload } from "@/components/file-upload";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-// Import the service we updated [cite: 1, 2]
 import { saveExam } from "@/services/teacherExamService";
 
 interface Course {
@@ -74,17 +72,25 @@ export default function CreateExamPage() {
     setIsSubmitting(true);
 
     try {
-      // 1) Validation
-      if (!title.trim()) throw new Error("Exam title is required");
-      if (!selectedCourseId) throw new Error("Please select a course");
-      if (!examType) throw new Error("Exam type is required");
-      if (modelAnswerFiles.length === 0) throw new Error("Please upload a model answer PDF for extraction");
+      // Validation
+      if (!title.trim()) {
+        throw new Error("Exam title is required");
+      }
+      if (!selectedCourseId) {
+        throw new Error("Please select a course");
+      }
+      if (!examType) {
+        throw new Error("Exam type is required");
+      }
+      if (modelAnswerFiles.length === 0) {
+        throw new Error("Please upload a model answer PDF for extraction");
+      }
 
-      // 2) Prepare metadata for the service
+      // Prepare metadata
       const selectedCourse = courses.find(c => c.id === selectedCourseId);
       const examMeta = {
         title,
-        type: examType, // Must match "MCQ", "TRUE_FALSE", etc. [cite: 4]
+        type: examType,
         examDate: deadline || null,
         description: selectedCourse
             ? `${selectedCourse.courseCode} - ${selectedCourse.courseName}`
@@ -92,11 +98,10 @@ export default function CreateExamPage() {
         courseId: selectedCourseId,
       };
 
-      // 3) Call the integrated saveExam service [cite: 1, 2, 5]
-      // This function handles: OCR -> AI Extraction -> S3 Upload -> Database Save
+      // Call unified saveExam service (handles Mistral OCR + extraction + save)
       await saveExam(modelAnswerFiles[0], examMeta);
 
-      // 4) Success Handling
+      // Success
       toast({
         title: "Exam Created Successfully!",
         description: `Exam "${title}" has been processed and saved.`,
@@ -106,11 +111,12 @@ export default function CreateExamPage() {
       router.refresh();
 
     } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred during exam creation");
+      const errorMessage = err instanceof Error ? err.message : "An error occurred during exam creation";
+      setError(errorMessage);
       toast({
         variant: "destructive",
         title: "Error",
-        description: err instanceof Error ? err.message : "Failed to create exam",
+        description: errorMessage,
       });
     } finally {
       setIsSubmitting(false);
@@ -195,7 +201,9 @@ export default function CreateExamPage() {
           <Card>
             <CardHeader>
               <CardTitle className="font-headline">AI Extraction</CardTitle>
-              <CardDescription>Upload the PDF containing questions and answers. The AI will parse these for grading.</CardDescription>
+              <CardDescription>
+                Upload the PDF containing questions and answers. The AI will parse these for grading.
+              </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-6">
               <div className="grid gap-2">

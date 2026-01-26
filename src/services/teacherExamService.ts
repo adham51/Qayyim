@@ -1,5 +1,3 @@
-import {mapOCRResponse, OCRResponse} from "@/types/exam-types";
-
 export interface TeacherExam {
   id: string;
   title: string;
@@ -73,37 +71,15 @@ export async function getTeacherExams(courseCode?: string): Promise<TeacherExams
   }
 }
 
-
-export async function getExamRawText(examFile: File): Promise<OCRResponse> {
-  try {
-    const formData = new FormData();
-    formData.append('file', examFile);
-
-    const response = await fetch('http://127.0.0.1:5001/ocr', {
-      method: 'POST',
-      body: formData,
-    });
-
-    if (!response.ok) {
-      throw new Error(`OCR request failed with status: ${response.status}`);
-    }
-
-    const data = await response.json();
-
-    if (!data || typeof data.success !== 'boolean' || typeof data.text !== 'string') {
-      throw new Error('OCR response is invalid or missing required fields');
-    }
-
-    return mapOCRResponse(data);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-
-    console.error('getExamRawText error:', message);
-
-    throw new Error(`Failed to get OCR text: ${message}`);
-  }
-}
-
+/**
+ * Unified service to process exam PDF using Mistral OCR + AI Extraction
+ * Then save to backend with S3 upload
+ *
+ * @param examFile The PDF file containing the exam
+ * @param examMeta Metadata for the exam (title, type, date, etc.)
+ * @returns Promise with the saved exam data
+ * @throws Error if OCR, extraction, or save fails
+ */
 export async function saveExam(
     examFile: File,
     examMeta: {
@@ -114,59 +90,63 @@ export async function saveExam(
       courseId?: string | null;
     }
 ) {
-  const rawExamText = await getExamRawText(examFile);
-  if (!rawExamText || !rawExamText.text) {
-    throw new Error("OCR failed: Could not retrieve text from the exam file");
-  }
+  // Step 1: Send PDF to Mistral extraction endpoint (OCR + AI extraction combined)
+  const formData = new FormData();
+  formData.append('file', examFile);
 
   const extractionResponse = await fetch("/api/v1/teacher/exams/extract", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${localStorage.getItem('token')}`,
-    },
-    body: JSON.stringify({ text: rawExamText.text }),
+    body: formData,
   });
 
   if (!extractionResponse.ok) {
-    const errorData = await extractionResponse.json();
-    throw new Error(errorData.error || "AI extraction failed");
+    const errorData = await extractionResponse.json().catch(() => ({}));
+    throw new Error(errorData.error || "Failed to extract questions from PDF");
   }
 
   const { questions } = await extractionResponse.json();
 
-  const formData = new FormData();
-  formData.append("modelAnswerFile", examFile);
-  formData.append("title", examMeta.title);
-  formData.append("type", examMeta.type);
+  if (!questions || !Array.isArray(questions) || questions.length === 0) {
+    throw new Error("No questions were extracted from the PDF");
+  }
+
+  // Step 2: Save exam to database with model answer file upload
+  const saveFormData = new FormData();
+  saveFormData.append("modelAnswerFile", examFile);
+  saveFormData.append("title", examMeta.title);
+  saveFormData.append("type", examMeta.type);
 
   if (examMeta.description) {
-    formData.append("description", examMeta.description);
+    saveFormData.append("description", examMeta.description);
   }
 
   if (examMeta.examDate) {
-    formData.append("examDate", examMeta.examDate);
+    saveFormData.append("examDate", examMeta.examDate);
   }
 
   if (examMeta.courseId) {
-    formData.append("courseId", examMeta.courseId);
+    saveFormData.append("courseId", examMeta.courseId);
   }
 
-  formData.append("questions", JSON.stringify(questions));
+  saveFormData.append("questions", JSON.stringify(questions));
 
-  const res = await fetch("/api/v1/teacher/exams", {
+  const token = localStorage.getItem('token');
+  if (!token) {
+    throw new Error('No authentication token found. Please log in.');
+  }
+
+  const saveResponse = await fetch("/api/v1/teacher/exams", {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${localStorage.getItem('token')}`,
+      "Authorization": `Bearer ${token}`,
     },
-    body: formData,
+    body: saveFormData,
   });
 
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({}));
+  if (!saveResponse.ok) {
+    const errorData = await saveResponse.json().catch(() => ({}));
     throw new Error(errorData.message || "Failed to save exam to database");
   }
 
-  return await res.json();
+  return await saveResponse.json();
 }
-

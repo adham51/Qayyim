@@ -1,271 +1,240 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { generateText } from "@/ai/genkit";
+import { Mistral } from '@mistralai/mistralai';
+
+// Initialize Mistral client
+const mistralClient = new Mistral({
+    apiKey: process.env.MISTRAL_API_KEY || "koirVgJzhrERAjR9OnlIhxWW2jgGgQWP"
+});
+
+// Data schema interface for exam questions
+interface QuestionEntry {
+    questionId: string;
+    type: string;
+    question: string;
+    questionGrade: number;
+    answer: string;
+}
+
+interface ExamQuestions {
+    questions: QuestionEntry[];
+}
 
 export async function POST(req: NextRequest) {
     try {
-        const { text } = await req.json();
+        const formData = await req.formData();
+        const file = formData.get('file') as File;
 
-        if (!text) {
-            return NextResponse.json({ error: "No exam text provided for extraction" }, { status: 400 });
+        if (!file) {
+            return NextResponse.json({ error: "No PDF file provided" }, { status: 400 });
         }
 
-        // Use the prompt builder from your service
-        const prompt = buildExamExtractionPrompt(text);
-
-        // Call the new generateText function from genkit.ts
-        const aiResponse = await generateText(prompt);
-
-        // Clean up markdown formatting if the AI returned it
-        let jsonText = aiResponse.trim();
-        if (jsonText.startsWith("```json")) {
-            jsonText = jsonText.replace(/```json\n?/g, "").replace(/```\n?/g, "");
-        } else if (jsonText.startsWith("```")) {
-            jsonText = jsonText.replace(/```\n?/g, "");
+        // Validate file type
+        if (file.type !== 'application/pdf') {
+            return NextResponse.json({ error: "Only PDF files are supported" }, { status: 400 });
         }
 
-        const questions = JSON.parse(jsonText);
+        console.log(`📄 [API] Processing exam PDF: ${file.name} (${file.size} bytes)`);
 
-        return NextResponse.json(questions);
+        // Step 1: Perform OCR using Mistral
+        const fileBuffer = Buffer.from(await file.arrayBuffer());
+        const rawExamText = await performMistralOCR(fileBuffer, file.name);
+
+        if (!rawExamText) {
+            return NextResponse.json(
+                { error: "OCR failed: Could not extract text from PDF" },
+                { status: 500 }
+            );
+        }
+
+        console.log(`✅ [API] OCR completed, text length: ${rawExamText.length} characters`);
+
+        // Step 2: Extract questions using Mistral Large
+        const prompt = buildExamExtractionPrompt(rawExamText);
+        const extractedData = await performMistralExtraction(prompt);
+
+        console.log(`✅ [API] Extraction completed, ${extractedData.questions.length} questions extracted`);
+
+        return NextResponse.json(extractedData);
     } catch (error: any) {
-        console.error("AI Extraction Error:", error);
+        console.error("❌ Exam Extraction Error:", error);
         return NextResponse.json(
-            { error: error.message || "Failed to parse exam questions" },
+            { error: error.message || "Failed to process exam PDF" },
             { status: 500 }
         );
     }
 }
 
-function buildExamExtractionPrompt(rawExamText: string): string {
-    return `
-You are given raw OCR text extracted from a single scanned handwritten exam PDF.
-The PDF represents ONE source only (e.g., a student solution OR an official solution),
-but NEVER a merged or paired document.
+/**
+ * Perform OCR using Mistral AI
+ */
+async function performMistralOCR(fileBuffer: Buffer, filename: string): Promise<string | null> {
+    try {
+        console.log(`📡 [API] Uploading ${fileBuffer.length} bytes to Mistral OCR...`);
 
-Your task is to analyze, clean, normalize, and structure the OCR text into a
-clear, logically formatted, and STRICTLY VALID JSON that represents the exam
-questions and the handwritten answers EXACTLY as written.
+        // Step 1: Upload file to Mistral
+        const uploadedFile = await mistralClient.files.upload({
+            file: {
+                fileName: filename,
+                content: fileBuffer
+            },
+            purpose: "ocr"
+        });
 
-The goal is to convert OCR text into a grading-ready structured JSON
-suitable for automated processing in the Qayyim evaluation system.
+        console.log(`✅ [API] File uploaded with ID: ${uploadedFile.id}`);
 
-Do NOT calculate scores, correctness, feedback, grading outcomes,
-or comparisons of any kind.
-Do NOT mention model answers, students, or merging.
---------------------------------------------------------------------
-PHASE 1 — STRUCTURED JSON CONVERSION
+        // Step 2: Process OCR
+        const ocrResponse = await mistralClient.ocr.process({
+            model: "mistral-ocr-latest",
+            document: {
+                type: "file",
+                fileId: uploadedFile.id
+            }
+        });
 
-Your JSON output MUST strictly follow the specification below.
+        console.log(`✅ [API] OCR completed, ${ocrResponse.pages.length} pages processed`);
 
-GENERAL EXTRACTION RULES
-• Do not summarize, interpret, or change meaning.
-• Fix only obvious OCR or formatting errors (spacing, capitalization, common OCR mistakes).
-• Preserve numbering, ordering, equations, and structure exactly.
-• Remove non-text placeholders:
-  [Image of …], [Drawing], [Sketch], (figure), (diagram), (graph)
-• Remove scanning artifacts:
-  page numbers, headers, footers, watermarks
-  (e.g., “Scanned with CamScanner”).
-• Preserve original question order and hierarchy.
-• Do NOT renumber, merge, or infer questions.
-• If a question’s points value is missing:
-  – Inherit from the same section if explicitly defined.
-  – Otherwise leave it blank.
+        // Step 3: Combine all pages into markdown
+        const fullMarkdown = ocrResponse.pages
+            .map((page, index) => `--- Page ${index + 1} ---\n${page.markdown}`)
+            .join("\n\n");
 
---------------------------------------------------------------------
-REQUIRED TOP-LEVEL STRUCTURE
-
-Output EXACTLY ONE JSON object with this structure:
-
-{
-  "questions": [
-    {
-      "questionId": "string",
-      "type": "MCQ | TrueFalse | Short-Answer | Calculation | ...",
-      "question": "string",
-      "questionGrade": number,
-      "answer": "string"
+        return fullMarkdown;
+    } catch (error) {
+        console.error('❌ Mistral OCR Error:', error instanceof Error ? error.message : error);
+        return null;
     }
-  ]
 }
 
-Do NOT include:
-• exam_title
-• student name
-• student ID
-• model_answer
-• student_answer
-• table_answers
-• metadata or comments
+/**
+ * Perform intelligent extraction using Mistral Large
+ */
+async function performMistralExtraction(prompt: string): Promise<ExamQuestions> {
+    try {
+        console.log('🤖 [API] Running Mistral Large extraction...');
 
---------------------------------------------------------------------
-STRICT MCQ / TRUE-FALSE STRUCTURE
+        // Create JSON schema for exam questions
+        const schemaDefinition = {
+            type: "object",
+            properties: {
+                questions: {
+                    type: "array",
+                    items: {
+                        type: "object",
+                        properties: {
+                            questionId: { type: "string" },
+                            type: { type: "string" },
+                            question: { type: "string" },
+                            questionGrade: { type: "number" },
+                            answer: { type: "string" }
+                        },
+                        required: ["questionId", "type", "question", "questionGrade", "answer"],
+                        additionalProperties: false
+                    }
+                }
+            },
+            required: ["questions"],
+            additionalProperties: false
+        };
 
-Every MCQ or True/False question MUST use this exact object structure:
+        const chatResponse = await mistralClient.chat.complete({
+            model: "mistral-large-latest",
+            messages: [
+                { role: "user", content: prompt }
+            ],
+            responseFormat: {
+                type: "json_schema",
+                jsonSchema: {
+                    name: "ExamQuestionsSchema",
+                    strict: true,
+                    schemaDefinition: schemaDefinition
+                }
+            }
+        });
 
-{
-  "questionId": "string",
-  "type": "MCQ | TrueFalse",
-  "question": "string",
-  "questionGrade": number,
-  "answer": "string"
+        const content = chatResponse.choices[0].message.content;
+        if (!content) {
+            throw new Error('No content returned from Mistral');
+        }
+
+        const extractedData = JSON.parse(content) as ExamQuestions;
+        console.log(`✅ [API] Extraction completed, ${extractedData.questions.length} questions extracted`);
+
+        return extractedData;
+    } catch (error) {
+        console.error('❌ Mistral Extraction Error:', error instanceof Error ? error.message : error);
+        throw error;
+    }
 }
 
---------------------------------------------------------------------
-MCQ NORMALIZATION RULES (MANDATORY)
+/**
+ * Build the exam extraction prompt
+ */
+function buildExamExtractionPrompt(fullMarkdown: string): string {
+    return `
+You are an intelligent exam-structuring assistant.
+Your task is to extract the exam into STRICT JSON matching the provided schema.
+DO NOT add extra fields. DO NOT add explanations.
+────────────────────────────────
+CORE EXTRACTION RULES
+────────────────────────────────
+1) Visual Separation:
+   - Printed/digital text → question
+   - Handwritten text immediately following → answer
+2) Each sub-question MUST become a separate entry in \`questions[]\`.
+────────────────────────────────
+QUESTION ID NORMALIZATION (MANDATORY)
+────────────────────────────────
+- If a main question has ANY subparts (labeled OR unlabeled), you MUST NOT create an entry with questionId equal
+  to the parent alone (e.g., "1" or "2"). Output ONLY sub-entries and the first MUST start at ".1".
+  - Question 1 with subparts -> first is "1.1", then "1.2", ...
+  - Question 2 with subparts -> first is "2.1", then "2.2", ...
 
-1. The \`answer\` field MUST ALWAYS be in this exact format:
-   "(letter) OptionText"
+- Labeled subparts (a/b/c, i/ii/iii, (a)(i), etc.):
+  - Normalize labels into numeric hierarchy (e.g., 2(a)(ii) -> 2.1.2)
 
-   Example:
-   "(b) Protocols"
+- Unlabeled subparts:
+  - If a parent question clearly contains multiple sub-questions but no labels are present,
+    split them and assign synthetic IDs in order like: "3.1", "3.2", "3.3", ...
 
-2. NEVER output:
-   • Only the letter (e.g., "b")
-   • Only the option text (e.g., "Protocols")
-
-3. Extract the selected option letter (case-insensitive),
-   and pair it with the EXACT option text as written in the question.
-
-4. Preserve the full MCQ question text EXACTLY, including:
-   • Question numbering (e.g., "1.", "1.1", "2.3")
-   • All options (a, b, c, d, or any count)
-   • Original order, labels, line breaks, and spacing
-   • Minor OCR fixes only
-
-5. Do NOT:
-   • Add options
-   • Remove options
-   • Reorder options
-   • Infer missing options
-
---------------------------------------------------------------------
-TRUE / FALSE NORMALIZATION RULES
-
-1. The ONLY valid values for \`answer\` are:
-   "True"
-   "False"
-   (Capitalized exactly)
-
-2. Do NOT include the statement text inside \`answer\`.
-   The statement belongs ONLY in the \`question\` field.
-
-3. Normalize inputs as follows (case-insensitive):
-   TRUE indicators:
-   "true", "t", "yes", "y", "✔", "(✔)", "✓", "v", "2", "L"
-
-   FALSE indicators:
-   "false", "f", "no", "n", "✘", "x", "(x)"
-
-4. If the answer is ambiguous or conflicting, leave \`answer\` as an empty string.
-
---------------------------------------------------------------------
-FORMATTING REQUIREMENTS
-
-• Merge multi-line text into a single clean string using "\\n".
-• Convert tables to Markdown ONLY when unavoidable.
-• Keep all equations in LaTeX.
-• Escape all backslashes as double backslashes (\\\\).
-• Escape all internal quotes using \\".
-• Sub-questions are allowed ONLY for non-MCQ types.
-• Do NOT invent missing content.
-
---------------------------------------------------------------------
-VALID JSON RULES (STRICT)
-
-• Output STRICTLY valid JSON only.
-• No comments.
-• No trailing commas.
-• No text before or after JSON.
-• Double quotes for all strings.
-• Escape rules MUST be enforced.
-• Validate JSON before returning it.
-
---------------------------------------------------------------------
-JSON ESCAPE RULES FOR LaTeX & SPECIAL CHARACTERS
-
-MANDATORY RULES:
-
-1. Every backslash MUST be doubled:
-   "\\"  → "\\\\"
-   "\\frac" → "\\\\frac"
-   "\\times" → "\\\\times"
-
-2. NEVER allow a single unescaped backslash.
-
-3. Disallow raw escape sequences:
-   \\n \\t \\m \\s \\p
-   Output instead:
-   \\\\n \\\\t \\\\m \\\\s \\\\p
-
-4. LaTeX example:
-   $t_{trans} = \\frac{1024}{4 \\times 10^6}$
-   becomes:
-   "$t_{trans} = \\\\frac{1024}{4 \\\\times 10^6}$"
-
-5. Replace all real newlines with literal "\\n".
-6. Convert tabs to spaces.
-7. If unsure whether a character needs escaping, ESCAPE IT.
-
---------------------------------------------------------------------
-POINTS & SCORING CONSISTENCY
-
-• Do NOT assign default points unless explicitly stated.
-• If a section gives a total score for multiple questions:
-  – Divide exactly.
-  – Do NOT round.
-• Preserve stated per-question points exactly.
-• MCQs in the same section MUST have identical points unless specified.
-• Do NOT infer, guess, or inflate scores.
-
---------------------------------------------------------------------
-OCR TYPO & GARBLED TEXT HANDLING
-
-• Fix ONLY obvious OCR errors that do not alter meaning.
-• Allowed:
-  spacing issues, merged words, clear misspellings.
-• NOT allowed:
-  rewriting, rephrasing, improving clarity.
-• If ambiguous, preserve original OCR text.
-
---------------------------------------------------------------------
-QUESTION / ANSWER SEPARATION
-
-• \`question\` = question prompt ONLY.
-• \`answer\` = handwritten response ONLY.
-• Do NOT embed answers inside question text.
-• If OCR mixes them, separate correctly without loss.
-
---------------------------------------------------------------------
-SUB-QUESTION & MULTI-PART HANDLING
-
-• One logical task = one question object.
-• Split questions if text contains multiple independent prompts:
-  (a), (b), i), ii), etc.
-• Preserve original numbering.
-• If numbering is missing, derive consistent hierarchical IDs.
-• Logical structure overrides OCR numbering artifacts.
-
---------------------------------------------------------------------
-FINAL ENFORCEMENT RULES
-
-• One question object = exactly one \`answer\`.
-• Preserve original order strictly.
-• No diagrams, no images, no explanations.
-• Automated grading compatibility overrides OCR artifacts.
-
---------------------------------------------------------------------
-FINAL OUTPUT RULE
-
-• Output EXACTLY ONE JSON object.
-• Containing ONLY the \`questions\` array.
-• NO extra text.
-
-DO NOT calculate scores, correctness, feedback, grading outcomes.
-
-OCR Text:
-"""
-${rawExamText}
-"""
+- Only output a parent-only ID like "3" when the question truly has no subparts (exactly one prompt).
+- Apply these rules to ALL question types (MCQ, TrueFalse, Short-Answer, etc.).
+────────────────────────────────
+GRADING RULES
+────────────────────────────────
+questionGrade:
+- If explicitly stated for the sub-question → use it
+- If only stated for the parent question → divide equally among its immediate subparts
+────────────────────────────────
+MCQ NORMALIZATION (MANDATORY)
+────────────────────────────────
+When type == "MCQ":
+- answer MUST be exactly:
+  "(letter) OptionText"
+- NEVER output only the letter
+- NEVER output only the option text
+────────────────────────────────
+TRUE/FALSE NORMALIZATION
+────────────────────────────────
+When type == "TrueFalse":
+- Normalize to exactly "True" or "False"
+True indicators:
+"true", "t", "yes", "y", "✓", "(✓)", "✔", "v", "2", "L"
+False indicators:
+"false", "f", "no", "n", "✗", "x", "(x)"
+If ambiguous → keep closest raw extracted text
+────────────────────────────────
+MISSING ANSWER HANDLING (MANDATORY)
+────────────────────────────────
+- If a question or sub-question has NO student answer present in the source (no handwritten text, no mark, no selection),
+  you MUST set:
+  answer = null
+- NEVER invent, infer, summarize, or restate an answer.
+- NEVER output an empty string ("") or placeholder text (e.g., "N/A", "Not answered").
+- If an answer is partially visible or unclear, extract the closest raw text that appears.
+────────────────────────────────
+EXAM CONTENT
+────────────────────────────────
+EXAM CONTENT:
+${fullMarkdown}
 `;
 }
-
