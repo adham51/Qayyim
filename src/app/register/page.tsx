@@ -50,7 +50,7 @@ export default function RegisterPage() {
 
             // Redirect based on role
             if (role === "STUDENT") {
-                router.push("/student/dashboard");
+                router.push("/login");
             } else if (role === "TEACHER") {
                 router.push("/teacher/dashboard");
             }

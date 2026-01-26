@@ -1,0 +1,11 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+flask
+flask-cors
+python-dotenv
+huggingface_hub
+langchain-chroma
+langchain-huggingface
+sentence-transformers
+chromadb
+# Adding +cpu makes it explicitly match the small version
+torch==2.5.1+cpu

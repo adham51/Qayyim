@@ -1,32 +1,41 @@
 // lib/parallel/redis.ts
-import { Redis } from 'ioredis';
+import { Redis } from "ioredis";
 
 const redisConfig = {
-    host: '127.0.0.1',
-    port: 6379,
-    maxRetriesPerRequest: null,
-    enableReadyCheck: false,
+  // IMPORTANT: use env, not localhost
+  url: process.env.REDIS_URL,
+
+  maxRetriesPerRequest: null,
+  enableReadyCheck: false,
+
+  // KEY FIX: do NOT connect at import time
+  lazyConnect: true,
 };
 
 // Create SEPARATE Redis connections for queue and worker
-// This is important for BullMQ to work correctly with concurrency
+export const createRedisConnection = () => {
+  if (!redisConfig.url) {
+    throw new Error("REDIS_URL is not defined");
+  }
 
-export const createRedisConnection = () => new Redis(redisConfig);
+  const redis = new Redis(redisConfig.url, redisConfig);
 
-// Default connection (for queue)
-export const redisConnection = createRedisConnection();
+  // ⬇️ KEEP YOUR LOGGING (unchanged)
+  redis.on("connect", () => {
+    console.log("✅ Redis (Queue) connected successfully");
+  });
 
-// Handle connection events
-redisConnection.on('connect', () => {
-    console.log('✅ Redis (Queue) connected successfully');
-});
+  redis.on("error", (error) => {
+    console.error("❌ Redis (Queue) connection error:", error);
+  });
 
-redisConnection.on('error', (error) => {
-    console.error('❌ Redis (Queue) connection error:', error);
-});
+  redis.on("close", () => {
+    console.log("⚠️ Redis (Queue) connection closed");
+  });
 
-redisConnection.on('close', () => {
-    console.log('⚠️ Redis (Queue) connection closed');
-});
+  return redis;
+};
 
-export default redisConnection;
+// ⛔ REMOVE eager default connection (this was the build-time bug)
+// export const redisConnection = createRedisConnection();
+// export default redisConnection;

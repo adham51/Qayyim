@@ -1,9 +1,8 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  // Only use standalone for production builds
-  output: process.env.NODE_ENV === 'production' ? 'standalone' : undefined,
-  
+  output: 'standalone',
+
   typescript: {
     ignoreBuildErrors: true,
   },
@@ -15,16 +14,9 @@ const nextConfig: NextConfig = {
       {
         protocol: 'https',
         hostname: 'placehold.co',
-        port: '',
         pathname: '/**',
       },
     ],
-  },
-  // This is the fix for Hot Reloading on Windows/Docker
-  experimental: {
-    watchOptions: {
-      pollIntervalMs: 1000,
-    },
   },
 };
 

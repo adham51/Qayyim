@@ -1,60 +1,52 @@
-# Stage 1: Dependencies
-FROM node:18-alpine AS deps
+# =========================
+# 1) Dependencies
+# =========================
+FROM node:20-alpine AS deps
+WORKDIR /app
+
 RUN apk add --no-cache libc6-compat openssl
-WORKDIR /app
 
-# Copy package files
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
 
-# Stage 2: Builder
-FROM node:18-alpine AS builder
+# =========================
+# 2) Builder
+# =========================
+FROM node:20-alpine AS builder
 WORKDIR /app
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Set environment variables for build (using ARG for build-time variables)
-ARG DATABASE_URL
-ARG RESEND_API
-ARG JWT_SECRET
-ARG AWS_REGION
-ARG AWS_ACCESS_KEY_ID
-ARG AWS_SECRET_ACCESS_KEY
-ARG AWS_S3_BUCKET_NAME
-ARG AWS_S3_ENDPOINT
-
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV DATABASE_URL=$DATABASE_URL
-ENV RESEND_API=$RESEND_API
-ENV JWT_SECRET=$JWT_SECRET
-ENV AWS_REGION=$AWS_REGION
-ENV AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-ENV AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-ENV AWS_S3_BUCKET_NAME=$AWS_S3_BUCKET_NAME
-ENV AWS_S3_ENDPOINT=$AWS_S3_ENDPOINT
 
-# Generate Prisma Client
+# Prisma client generation (needs schema only)
 RUN npx prisma generate
 
-# Build Next.js (this will create standalone output)
+# Build Next.js standalone output
+ARG RESEND_API=dummy
+ENV RESEND_API=$RESEND_API
 RUN npm run build
 
-# Stage 3: Runner
-FROM node:18-alpine AS runner
+# =========================
+# 3) Runner (minimal)
+# =========================
+FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+RUN addgroup -g 1001 -S nodejs \
+ && adduser -S nextjs -u 1001
 
-# Copy built application
+# Copy only what we need
 COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
 
-# Copy Prisma files
+# Prisma runtime deps
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
@@ -62,8 +54,8 @@ COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 USER nextjs
 
 EXPOSE 3000
-
 ENV PORT=3000
-ENV HOSTNAME="0.0.0.0"
+ENV HOSTNAME=0.0.0.0
 
+# Run migrations before starting the app
 CMD ["node", "server.js"]

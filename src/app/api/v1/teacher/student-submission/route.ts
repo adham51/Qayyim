@@ -1,55 +1,48 @@
-import pdfQueue from "@/lib/parallel/queues/pdfQueue";
-import { NextRequest } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import { requireRole } from '@/lib/middleware';
-import { successResponse, handleApiError } from '@/lib/api-response';
-import { FILE_UPLOAD, MESSAGES } from '@/lib/constants';
-import { uploadStudentAnswer } from '@/lib/s3';
+import { getPdfQueue } from "@/lib/parallel/queues/pdfQueue";
+import { NextRequest } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireRole } from "@/lib/middleware";
+import { successResponse, handleApiError } from "@/lib/api-response";
+import { FILE_UPLOAD, MESSAGES } from "@/lib/constants";
+import { uploadStudentAnswer } from "@/lib/s3";
 
 export const runtime = "nodejs";
 
 function extractStudentUserId(filename: string): string | null {
-  const nameWithoutExt = filename.replace(/\.pdf$/i, '');
+  const nameWithoutExt = filename.replace(/\.pdf$/i, "");
   return nameWithoutExt || null;
 }
 
 export async function POST(request: NextRequest) {
-  try {
-    console.log('📥 Received POST request for PDF processing');
+  // ✅ init queue ONLY at runtime (not at import/build time)
+  const pdfQueue = getPdfQueue();
 
-    const authUser = requireRole(request, 'instructor');
+  try {
+    console.log("📥 Received POST request for PDF processing");
+
+    const authUser = requireRole(request, "instructor");
     const instructor = await prisma.instructor.findUnique({
-      where: { userId: authUser.userId }
+      where: { userId: authUser.userId },
     });
 
-    if (!instructor) {
-      throw new Error('Instructor not found');
-    }
+    if (!instructor) throw new Error("Instructor not found");
 
     const formData = await request.formData();
-    const examId = formData.get('examId') as string;
-    const autoExtract = formData.get('autoExtract') === 'true';
+    const examId = formData.get("examId") as string;
+    const autoExtract = formData.get("autoExtract") === "true";
 
-    if (!examId) {
-      throw new Error('Exam ID is required');
-    }
+    if (!examId) throw new Error("Exam ID is required");
 
-    // Verify exam exists and belongs to instructor
-    const exam = await prisma.exam.findUnique({
-      where: { id: examId },
-    });
-
+    const exam = await prisma.exam.findUnique({ where: { id: examId } });
     if (!exam || exam.instructorId !== instructor.id) {
-      throw new Error('Exam not found or access denied');
+      throw new Error("Exam not found or access denied");
     }
 
-    const singleFile = formData.get('file') as File | null;
-    const multipleFiles = formData.getAll('files') as File[];
+    const singleFile = formData.get("file") as File | null;
+    const multipleFiles = formData.getAll("files") as File[];
     const files = singleFile ? [singleFile] : multipleFiles;
 
-    if (files.length === 0) {
-      throw new Error('At least one file is required');
-    }
+    if (files.length === 0) throw new Error("At least one file is required");
 
     const queuedJobs: any[] = [];
     const errors: any[] = [];
@@ -64,8 +57,8 @@ export async function POST(request: NextRequest) {
         }
 
         const studentUserId = autoExtract
-            ? extractStudentUserId(file.name)
-            : file.name.replace(/\.pdf$/i, '');
+          ? extractStudentUserId(file.name)
+          : file.name.replace(/\.pdf$/i, "");
 
         if (!studentUserId) {
           errors.push({ filename: file.name, error: MESSAGES.STUDENT.ID_EXTRACT_FAILED });
@@ -81,35 +74,31 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
-        // --- THE FIX STARTS HERE ---
-        // 1. Convert File to ArrayBuffer, then to Node.js Buffer
         console.log(`🛠️ Converting ${file.name} to Buffer...`);
         const arrayBuffer = await file.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
 
-        // 2. Upload the Buffer to S3
         console.log(`📤 Uploading to S3...`);
         const s3Url = await uploadStudentAnswer(examId, studentUserId, buffer);
         console.log(`✅ S3 Success: ${s3Url}`);
-        // --- THE FIX ENDS HERE ---
 
         const jobData = {
           examId,
           studentUserId,
-          fileBuffer: buffer.toString('base64'),  // ✅ ADD THIS LINE
+          fileBuffer: buffer.toString("base64"),
           filename: file.name,
           instructorId: instructor.id,
           autoExtract,
         };
 
         const job = await pdfQueue.add(
-            `process-${studentUserId}-${Date.now()}`,
-            jobData,
-            {
-              priority: 1,
-              attempts: 3,
-              backoff: { type: 'exponential', delay: 2000 },
-            }
+          `process-${studentUserId}-${Date.now()}`,
+          jobData,
+          {
+            priority: 1,
+            attempts: 3,
+            backoff: { type: "exponential", delay: 2000 },
+          }
         );
 
         console.log(`🚀 Job queued: ${job.id}`);
@@ -119,7 +108,7 @@ export async function POST(request: NextRequest) {
           filename: file.name,
           studentUserId,
           s3Url,
-          status: 'queued',
+          status: "queued",
         });
       } catch (error: any) {
         console.error(`❌ Error processing ${file.name}:`, error);
@@ -131,52 +120,59 @@ export async function POST(request: NextRequest) {
       pdfQueue.getWaitingCount(),
       pdfQueue.getActiveCount(),
       pdfQueue.getCompletedCount(),
-      pdfQueue.getFailedCount()
+      pdfQueue.getFailedCount(),
     ]);
 
-    console.log(`📊 Final Queue Status: waiting=${waiting}, active=${active}, completed=${completed}, failed=${failed}`);
+    console.log(
+      `📊 Final Queue Status: waiting=${waiting}, active=${active}, completed=${completed}, failed=${failed}`
+    );
 
-    return successResponse({
-      queued: queuedJobs.length,
-      failed: errors.length,
-      jobs: queuedJobs,
-      errors
-    }, `Queued ${queuedJobs.length} submissions`);
-
+    return successResponse(
+      {
+        queued: queuedJobs.length,
+        failed: errors.length,
+        jobs: queuedJobs,
+        errors,
+      },
+      `Queued ${queuedJobs.length} submissions`
+    );
   } catch (error) {
-    console.error('❌ Route error:', error);
+    console.error("❌ Route error:", error);
     return handleApiError(error);
   }
 }
 
 export async function GET(request: NextRequest) {
+  // ✅ init queue ONLY at runtime (not at import/build time)
+  const pdfQueue = getPdfQueue();
+
   try {
-    requireRole(request, 'instructor');
+    requireRole(request, "instructor");
     const { searchParams } = new URL(request.url);
-    const jobId = searchParams.get('jobId');
+    const jobId = searchParams.get("jobId");
 
     if (!jobId) {
       const [waiting, active, completed, failed] = await Promise.all([
         pdfQueue.getWaitingCount(),
         pdfQueue.getActiveCount(),
         pdfQueue.getCompletedCount(),
-        pdfQueue.getFailedCount()
+        pdfQueue.getFailedCount(),
       ]);
 
       return successResponse({
-        queue: { waiting, active, completed, failed, total: waiting + active + completed + failed }
+        queue: { waiting, active, completed, failed, total: waiting + active + completed + failed },
       });
     }
 
     const job = await pdfQueue.getJob(jobId);
-    if (!job) return successResponse({ jobId, status: 'not_found' }, 'Job not found', 404);
+    if (!job) return successResponse({ jobId, status: "not_found" }, "Job not found", 404);
 
     return successResponse({
       jobId: job.id,
       status: await job.getState(),
       progress: job.progress,
       result: job.returnvalue,
-      failedReason: job.failedReason
+      failedReason: job.failedReason,
     });
   } catch (error) {
     return handleApiError(error);
