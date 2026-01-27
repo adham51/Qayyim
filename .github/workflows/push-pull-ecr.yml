@@ -97,11 +97,9 @@ jobs:
             aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
             
             # 2. Pull the latest images explicitly
-            # (This updates the 'latest' tag on your server)
             docker-compose -f docker-compose.prod.yml pull
             
             # 3. Restart Containers
-            # --force-recreate ensures it kills the old container and starts the new one
             docker-compose -f docker-compose.prod.yml up -d --force-recreate --remove-orphans
             
             # Cleanup
