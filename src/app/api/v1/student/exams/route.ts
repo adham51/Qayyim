@@ -5,7 +5,7 @@ import { successResponse, handleApiError } from '@/lib/api-response';
 
 export async function GET(request: NextRequest) {
   try {
-    const authUser = requireRole(request, 'STUDENT');
+    const authUser = requireRole(request, 'student');
     
     // Get all active exams
     const exams = await prisma.exam.findMany({
@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
     // Add submission status to exams
     const examsWithStatus = exams.map(exam => ({
       ...exam,
-      teacherName: exam.teacher.name,
+      teacherName: exam.instructor.name,
       hasSubmitted: submissionMap.has(exam.id),
       submissionStatus: submissionMap.get(exam.id) || null,
     }));

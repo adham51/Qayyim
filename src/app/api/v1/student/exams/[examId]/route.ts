@@ -8,7 +8,7 @@ export async function GET(
   { params }: { params: { examId: string } }
 ) {
   try {
-    const authUser = requireRole(request, 'STUDENT');
+    const authUser = requireRole(request, 'student');
     
     // Get exam details (without model answer - students shouldn't see it)
     const exam = await prisma.exam.findUnique({
@@ -54,7 +54,7 @@ export async function GET(
       submission: submission ? {
         id: submission.id,
         status: submission.status,
-        score: submission.score,
+        score: submission.marks,
         submittedAt: submission.createdAt,
       } : null,
     });

@@ -5,7 +5,7 @@ import { successResponse, handleApiError } from '@/lib/api-response';
 
 export async function GET(request: NextRequest) {
   try {
-    const authUser = requireRole(request, 'STUDENT');
+    const authUser = requireRole(request, 'student');
     
     // Get recently graded submissions for this student
     const recentlyGraded = await prisma.submission.findMany({
