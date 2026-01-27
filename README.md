@@ -4,7 +4,6 @@
 
 ## 📖 Overview
 
-Qayyim is a web-based system that automates grading for multiple-choice, true/false, and short-answer questions in computer science subjects, including algorithms, data structures, and programming fundamentals.
 
 ## ✨ Features
 
