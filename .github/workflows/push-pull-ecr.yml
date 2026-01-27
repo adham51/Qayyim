@@ -2,8 +2,8 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches:
-      - main  # Only runs on main
+    branches-ignore:
+      - main # Runs when you push to anything other than main!
   workflow_dispatch: # Allows manual triggering
 
 env:
