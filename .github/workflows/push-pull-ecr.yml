@@ -2,8 +2,8 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches-ignore:
-        -main # Runs when you push to anything other than main!
+    branches:
+      - main  # Only runs on main
   workflow_dispatch: # Allows manual triggering
 
 env:
@@ -18,6 +18,9 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -28,7 +31,7 @@ jobs:
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 1. NEXT.JS APP
+      # 1. NEXT.JS APP (With Caching)
       - name: Build & Push App
         uses: docker/build-push-action@v5
         with:
@@ -38,8 +41,10 @@ jobs:
           tags: |
             ${{ env.ECR_REGISTRY }}/qayyim-app:${{ github.sha }}
             ${{ env.ECR_REGISTRY }}/qayyim-app:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      # 2. AI SERVICE
+      # 2. AI SERVICE (With Caching - Critical for Python/AI!)
       - name: Build & Push AI Service
         uses: docker/build-push-action@v5
         with:
@@ -49,8 +54,10 @@ jobs:
           tags: |
             ${{ env.ECR_REGISTRY }}/qayyim-ai:${{ github.sha }}
             ${{ env.ECR_REGISTRY }}/qayyim-ai:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      # 3. WORKER
+      # 3. WORKER (With Caching)
       - name: Build & Push Worker
         uses: docker/build-push-action@v5
         with:
@@ -60,12 +67,14 @@ jobs:
           tags: |
             ${{ env.ECR_REGISTRY }}/qayyim-worker:${{ github.sha }}
             ${{ env.ECR_REGISTRY }}/qayyim-worker:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   deploy:
-    name: Deploy to Production
+    name: Deploy to EC2
     needs: build-and-push
     runs-on: ubuntu-latest
-    environment: production  # <--- THIS ENABLES THE APPROVAL BUTTON
+    environment: production
     
     steps:
       - name: Deploy to EC2
@@ -74,29 +83,43 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          # 1. PASS SECRETS TO THE SERVER SESSION
+          envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_REGION,ECR_REGISTRY,GITHUB_SHA
           script: |
-            # 1. Navigate to Project
+            # Set up the credentials on the server session
+            export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+            export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+            export AWS_DEFAULT_REGION=$AWS_REGION
+            
+            # Navigate to Project
             cd ~/Qayyim-master
             
-            # 2. Login to ECR
-            aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-central-1.amazonaws.com
+            # 2. LOGIN TO ECR
+            aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
             
-            # 3. Pull New Images
-            docker pull ${{ env.ECR_REGISTRY }}/qayyim-app:${{ github.sha }}
-            docker pull ${{ env.ECR_REGISTRY }}/qayyim-ai:${{ github.sha }}
-            docker pull ${{ env.ECR_REGISTRY }}/qayyim-worker:${{ github.sha }}
+            # 3. PULL IMAGES
+            docker pull $ECR_REGISTRY/qayyim-app:$GITHUB_SHA
+            docker pull $ECR_REGISTRY/qayyim-ai:$GITHUB_SHA
+            docker pull $ECR_REGISTRY/qayyim-worker:$GITHUB_SHA
             
-            # 4. Update docker-compose.prod.yml with new Image Tags
-            # This replaces "image: ...qayyim-app..." with the specific commit SHA
-            sed -i -E "s|image: .*qayyim-app.*|image: ${{ env.ECR_REGISTRY }}/qayyim-app:${{ github.sha }}|g" docker-compose.prod.yml
-            sed -i -E "s|image: .*qayyim-ai.*|image: ${{ env.ECR_REGISTRY }}/qayyim-ai:${{ github.sha }}|g" docker-compose.prod.yml
-            sed -i -E "s|image: .*qayyim-worker.*|image: ${{ env.ECR_REGISTRY }}/qayyim-worker:${{ github.sha }}|g" docker-compose.prod.yml
+            # 4. UPDATE COMPOSE FILE
+            sed -i -E "s|image: .*qayyim-app.*|image: $ECR_REGISTRY/qayyim-app:$GITHUB_SHA|g" docker-compose.prod.yml
+            sed -i -E "s|image: .*qayyim-ai.*|image: $ECR_REGISTRY/qayyim-ai:$GITHUB_SHA|g" docker-compose.prod.yml
+            sed -i -E "s|image: .*qayyim-worker.*|image: $ECR_REGISTRY/qayyim-worker:$GITHUB_SHA|g" docker-compose.prod.yml
             
-            # 5. Restart Containers
-            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            # 5. RESTART CONTAINERS
+            docker-compose -f docker-compose.prod.yml up -d --remove-orphans
             
-            # 6. Cleanup Space (Remove old images)
+            # 6. CLEANUP
             docker image prune -f
+
+        # Define the actual values for the 'envs' above
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+          ECR_REGISTRY: ${{ env.ECR_REGISTRY }}
+          GITHUB_SHA: ${{ github.sha }}
 
       - name: Health Check
         run: |
