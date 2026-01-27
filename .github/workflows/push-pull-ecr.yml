@@ -2,9 +2,8 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches-ignore:
-      - main # Runs when you push to anything other than main!
-  workflow_dispatch: # Allows manual triggering
+    branches: ['*'] # Runs on EVERY branch push
+  workflow_dispatch:
 
 env:
   AWS_REGION: eu-central-1
@@ -31,7 +30,7 @@ jobs:
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 1. NEXT.JS APP (With Caching)
+      # 1. NEXT.JS APP
       - name: Build & Push App
         uses: docker/build-push-action@v5
         with:
@@ -44,7 +43,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # 2. AI SERVICE (With Caching - Critical for Python/AI!)
+      # 2. AI SERVICE
       - name: Build & Push AI Service
         uses: docker/build-push-action@v5
         with:
@@ -57,7 +56,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # 3. WORKER (With Caching)
+      # 3. WORKER
       - name: Build & Push Worker
         uses: docker/build-push-action@v5
         with:
@@ -83,43 +82,36 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          # 1. PASS SECRETS TO THE SERVER SESSION
-          envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_REGION,ECR_REGISTRY,GITHUB_SHA
+          # 1. Pass secrets to server session
+          envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_REGION,ECR_REGISTRY
           script: |
-            # Set up the credentials on the server session
+            # Set up credentials
             export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
             export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
             export AWS_DEFAULT_REGION=$AWS_REGION
             
-            # Navigate to Project
+            # Go to project folder
             cd ~/Qayyim-master
             
-            # 2. LOGIN TO ECR
+            # Login to ECR
             aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
             
-            # 3. PULL IMAGES
-            docker pull $ECR_REGISTRY/qayyim-app:$GITHUB_SHA
-            docker pull $ECR_REGISTRY/qayyim-ai:$GITHUB_SHA
-            docker pull $ECR_REGISTRY/qayyim-worker:$GITHUB_SHA
+            # 2. Pull the latest images explicitly
+            # (This updates the 'latest' tag on your server)
+            docker-compose -f docker-compose.prod.yml pull
             
-            # 4. UPDATE COMPOSE FILE
-            sed -i -E "s|image: .*qayyim-app.*|image: $ECR_REGISTRY/qayyim-app:$GITHUB_SHA|g" docker-compose.prod.yml
-            sed -i -E "s|image: .*qayyim-ai.*|image: $ECR_REGISTRY/qayyim-ai:$GITHUB_SHA|g" docker-compose.prod.yml
-            sed -i -E "s|image: .*qayyim-worker.*|image: $ECR_REGISTRY/qayyim-worker:$GITHUB_SHA|g" docker-compose.prod.yml
+            # 3. Restart Containers
+            # --force-recreate ensures it kills the old container and starts the new one
+            docker-compose -f docker-compose.prod.yml up -d --force-recreate --remove-orphans
             
-            # 5. RESTART CONTAINERS
-            docker-compose -f docker-compose.prod.yml up -d --remove-orphans
-            
-            # 6. CLEANUP
+            # Cleanup
             docker image prune -f
 
-        # Define the actual values for the 'envs' above
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ env.AWS_REGION }}
           ECR_REGISTRY: ${{ env.ECR_REGISTRY }}
-          GITHUB_SHA: ${{ github.sha }}
 
       - name: Health Check
         run: |
