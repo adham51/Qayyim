@@ -32,7 +32,7 @@ export default function Home() {
               Smarter Grading, Faster Feedback.
             </h1>
             <p className="mx-auto mt-4 max-w-[700px] text-lg text-muted-foreground md:text-xl">
-              Qayyim leverages generative AI to automate exam grading for computer science courses, providing consistent, scalable, and transparent evaluations. test2 :))
+              Qayyim leverages generative AI to automate exam grading for computer science courses, providing consistent, scalable, and transparent evaluations.
             </p>
             <div className="mt-8">
               <Button size="lg" asChild>
