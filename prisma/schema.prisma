@@ -44,19 +44,19 @@ model Student {
 }
 
 model Course {
-  id            String      @id @default(cuid())
-  courseCode    String
-  courseName    String
-  sectionType   SectionType
-  sectionNumber String
-  academicYear  String
-  semester      Semester
-  isActive      Boolean     @default(true)
-
+  id              String       @id @default(cuid())
+  courseCode      String
+  enrollmentToken String?      @unique @default(uuid())
+  courseName      String
+  sectionType     SectionType
+  sectionNumber   String
+  academicYear    String
+  semester        Semester
+  isActive        Boolean      @default(true)
   // Relations
-  instructors Instructor[] @relation("CourseInstructors")
-  students    Student[]    @relation("CourseStudents")
-  exams       Exam[]       @relation("CourseExams")
+  instructors     Instructor[] @relation("CourseInstructors")
+  students        Student[]    @relation("CourseStudents")
+  exams           Exam[]       @relation("CourseExams")
 
   @@unique([courseCode, sectionType, academicYear, semester, sectionNumber])
   @@map("courses")

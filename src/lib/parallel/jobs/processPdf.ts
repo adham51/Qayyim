@@ -1,16 +1,11 @@
-// src/lib/parallel/jobs/processPdf.ts
-import { prisma } from "@/lib/prisma";
-import { uploadStudentAnswer } from "@/lib/s3";
-import { MESSAGES } from "@/lib/constants";
-import { PdfProcessingJob, PdfProcessingResult } from "@/lib/parallel/queues/pdfQueue";
-import { Mistral } from "@mistralai/mistralai";
+import {prisma} from '@/lib/prisma';
+import {uploadStudentAnswer} from '@/lib/s3';
+import {MESSAGES} from '@/lib/constants';
+import {PdfProcessingJob, PdfProcessingResult} from "@/lib/parallel/queues/pdfQueue";
+import {Mistral} from '@mistralai/mistralai';
+import axios, {AxiosError} from 'axios';
 
-// ✅ Docker-safe: DO NOT use 127.0.0.1 for other containers
-// Use env AI_GRADING_SERVICE_URL (example: http://ai_grading:5000)
-const QWEN_BASE_URL =
-  process.env.AI_GRADING_SERVICE_URL?.replace(/\/$/, "") || "http://ai_grading:5000";
-
-// ✅ Avoid doing stuff at module import time (build-safe)
+// Initialize Mistral client
 let _mistral: Mistral | null = null;
 function getMistralClient() {
   if (_mistral) return _mistral;
@@ -21,28 +16,124 @@ function getMistralClient() {
   return _mistral;
 }
 
+// Configure axios instance for Qwen server with better connection handling
+const qwenClient = axios.create({
+    baseURL: 'http://ai_grading:5000',
+    timeout: 600000, // 10 minutes timeout for AI grading
+    headers: {
+        'Content-Type': 'application/json',
+    },
+    // Better connection pooling for concurrent requests
+    maxRedirects: 5,
+    // Keep connections alive for reuse
+    httpAgent: undefined, // Will use default HTTP agent with keep-alive
+});
+
 // Data schema interfaces matching Python Pydantic models
-interface AnswerEntry {
-  questionId: string;
-  type: string;
-  question: string;
-  answer: string | null;
-  questionGrade: number;
-  studentGrade: number | null;
-  feedback: string | null;
+interface QuestionEntry {
+    questionId: string;
+    type: string;
+    question: string;
+    answer: string;
+    questionGrade: number;
+    studentGrade: number | null;
+    feedback: string | null;
 }
 
 interface ScannedExam {
-  student_info: Record<string, string>;
-  answers: AnswerEntry[];
+    student_info: Record<string, string>;
+    questions: QuestionEntry[];
+}
+
+/**
+ * Extract MCQ choice map from question text
+ * Supports: A. text, B) text, C - text
+ */
+function extractMcqChoiceMap(questionText: string): Record<string, string> {
+    const text = questionText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+    const optionStart = text.search(/(?:^|\n)\s*[A-D]\s*[\.\)\-:]\s+/m);
+    const optionsBlock = optionStart !== -1 ? text.substring(optionStart) : text;
+
+    const pattern = /^\s*([A-D])\s*[\.\)\-:]\s*(.+?)(?=^\s*[A-D]\s*[\.\)\-:]\s+|$)/gms;
+
+    const choices: Record<string, string> = {};
+    let match;
+    while ((match = pattern.exec(optionsBlock)) !== null) {
+        const letter = match[1].toUpperCase();
+        const body = match[2].replace(/\s+/g, ' ').trim();
+        choices[letter] = body;
+    }
+
+    return choices;
+}
+
+/**
+ * Extract MCQ stem (remove options, keep only question)
+ */
+function extractMcqStem(questionText: string): string {
+    const text = questionText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+    const optionStart = text.search(/(?:^|\n)\s*[A-D]\s*[\.\)\-:]\s+/m);
+
+    if (optionStart === -1) {
+        return text.replace(/\s+/g, ' ');
+    }
+
+    const stem = text.substring(0, optionStart).trim();
+    return stem.replace(/\s+/g, ' ');
+}
+
+/**
+ * Normalize exam JSON:
+ * - Adds studentGrade = null and feedback = null
+ * - Expands MCQ answers from letter to full selected option
+ * - Cleans MCQ question text to stem only
+ */
+function normalizeExamJson(exam: ScannedExam): ScannedExam {
+    const questions = exam.questions.map(q => {
+        const normalized = {
+            ...q,
+            studentGrade: null,
+            feedback: null
+        };
+
+        if (q.type.toLowerCase() === 'mcq') {
+            const answerLetter = q.answer.trim().toUpperCase();
+
+            if (/^[A-D]$/.test(answerLetter)) {
+                const fullQuestion = q.question;
+                const choices = extractMcqChoiceMap(fullQuestion);
+                const stem = extractMcqStem(fullQuestion);
+
+                if (stem) {
+                    normalized.question = stem;
+                }
+
+                if (choices[answerLetter]) {
+                    normalized.answer = `(${answerLetter}) ${choices[answerLetter]}`;
+                } else {
+                    normalized.answer = `(${answerLetter})`;
+                }
+            }
+        }
+
+        return normalized;
+    });
+
+    return {
+        student_info: exam.student_info,
+        questions
+    };
 }
 
 /**
  * Process a single PDF submission
  * This function contains all the OCR, AI extraction, grading, and storage logic
  */
-export async function processPdfSubmission(job: PdfProcessingJob): Promise<PdfProcessingResult> {
-  const { examId, studentUserId, fileBuffer, filename, instructorId } = job;
+export async function processPdfSubmission(
+    job: PdfProcessingJob
+): Promise<PdfProcessingResult> {
+    const { examId, studentUserId, fileBuffer, filename, instructorId, courseName } = job;
 
   try {
     // Get exam details
@@ -71,97 +162,136 @@ export async function processPdfSubmission(job: PdfProcessingJob): Promise<PdfPr
       throw new Error("OCR failed: Could not retrieve text from the submission file");
     }
 
-    // Step 2: AI Extraction using Mistral
-    const prompt = buildMistralExtractionPrompt(rawExamText);
-    const extractedData = await performMistralExtraction(prompt);
-    const studentAnswers = extractedData.answers;
+        // Step 2: AI Extraction using Mistral with the exact Python prompt
+        const extractedData = await performMistralExtraction(rawExamText);
 
-    // Step 3: Parse exam questions
-    const examQuestions = JSON.parse(exam.questions as string);
+        // Step 2.5: Normalize the extracted data (MCQ expansion, etc.)
+        const normalizedData = normalizeExamJson(extractedData);
+        const studentAnswers = normalizedData.questions;
 
-    // Step 4: Build Qwen grading input
-    const qwenInput = {
-      examId,
-      studentId: student.id,
-      questions: studentAnswers.map((studentAns: any) => {
-        const modelQuestion = examQuestions.find((q: any) => q.questionId === studentAns.questionId);
-        return {
-          questionId: studentAns.questionId,
-          type: modelQuestion?.type || "SHORT_ANSWER",
-          question: modelQuestion?.question || "",
-          modelAns: modelQuestion?.answer || "",
-          studentAnswer: studentAns.answer,
+        // Step 3: Parse exam questions (model answers)
+        const examQuestions = JSON.parse(exam.questions as string);
+
+        // Step 4: Build Qwen grading input matching Python server format
+        const qwenInput = {
+            student_info: {
+                Name: normalizedData.student_info.Name || studentUserId,
+                ID: studentUserId,
+                Course: 'Security',
+                Exam: exam.title || 'Unknown Exam'
+            },
+            answers: studentAnswers.map((studentAns: any) => {
+                const modelQuestion = examQuestions.find((q: any) => q.questionId === studentAns.questionId);
+                return {
+                    questionId: studentAns.questionId,
+                    type: modelQuestion?.type || 'Short Answer',
+                    question: modelQuestion?.question || studentAns.question,
+                    modelAnswer: modelQuestion?.answer || '',
+                    student_answer: studentAns.answer
+                };
+            })
         };
-      }),
-    };
 
-    // Step 5: Send to Qwen grading endpoint (Docker-safe)
-    const qwenResponse = await fetch(`${QWEN_BASE_URL}/grade`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(qwenInput),
-    });
+        // Step 5: Send to Qwen grading endpoint using axios
+        console.log('🤖 [Worker] Sending to Qwen grading endpoint...');
+        console.log(`📊 [Worker] Grading ${qwenInput.answers.length} answers for student ${studentUserId}`);
 
-    if (!qwenResponse.ok) {
-      throw new Error(`Qwen grading failed with status: ${qwenResponse.status}`);
-    }
+        let qwenResult;
+        try {
+            const response = await qwenClient.post('/grade', qwenInput);
+            qwenResult = response.data;
+            console.log('✅ [Worker] Received response from Qwen');
+        } catch (error) {
+            if (axios.isAxiosError(error)) {
+                const axiosError = error as AxiosError;
 
-    const qwenResult = await qwenResponse.json();
-    const gradedQuestions = qwenResult.questions;
+                // Handle timeout
+                if (axiosError.code === 'ECONNABORTED') {
+                    throw new Error('Qwen grading timed out after 10 minutes. The AI server may be overloaded.');
+                }
 
-    // Step 6: Merge grading results
-    const finalAnswers = studentAnswers.map((studentAns: any) => {
-      const graded = gradedQuestions.find((g: any) => g.questionId === studentAns.questionId);
-      const modelQuestion = examQuestions.find((q: any) => q.questionId === studentAns.questionId);
+                // Handle connection refused
+                if (axiosError.code === 'ECONNREFUSED') {
+                    throw new Error('Cannot connect to Qwen grading server. Please ensure the Python server is running on http://127.0.0.1:5000');
+                }
 
-      return {
-        questionId: studentAns.questionId,
-        answer: studentAns.answer,
-        studentGrade: graded?.grade || 0,
-        questionGrade: modelQuestion?.questionGrade || 0,
-        feedback: graded?.feedback || "",
-      };
-    });
+                // Handle HTTP error responses
+                if (axiosError.response) {
+                    const status = axiosError.response.status;
+                    const errorText = typeof axiosError.response.data === 'string'
+                        ? axiosError.response.data
+                        : JSON.stringify(axiosError.response.data);
+                    throw new Error(`Qwen grading failed with status ${status}: ${errorText}`);
+                }
 
-    // Calculate total marks (kept as you had it)
-    const totalMarks = finalAnswers.reduce((sum: number, ans: any) => {
-      const earnedMarks = (ans.studentGrade || 0) * (ans.questionGrade || 0);
-      return sum + earnedMarks;
-    }, 0);
+                // Handle network errors
+                if (axiosError.request) {
+                    throw new Error(`No response received from Qwen grading server: ${axiosError.message}`);
+                }
+            }
 
-    const maxMarks = finalAnswers.reduce((sum: number, ans: any) => {
-      return sum + (ans.questionGrade || 0);
-    }, 0);
+            // Re-throw unknown errors
+            throw new Error(`Failed to connect to Qwen grading server: ${error instanceof Error ? error.message : String(error)}`);
+        }
 
-    // Step 7: Upload to S3 (kept)
-    const s3Url = await uploadStudentAnswer(examId, studentUserId, realFileBuffer);
+        const gradedAnswers = qwenResult.graded_answers;
 
-    // Step 8: Save to database
-    const submission = await prisma.submission.upsert({
-      where: {
-        studentId_examId: {
-          studentId: student.id,
-          examId: examId,
-        },
-      },
-      update: {
-        fileLink: s3Url,
-        originalAnswers: finalAnswers,
-        marks: totalMarks,
-        status: "GRADED",
-        gradedAt: new Date(),
-        updatedAt: new Date(),
-      },
-      create: {
-        studentId: student.id,
-        examId,
-        fileLink: s3Url,
-        originalAnswers: finalAnswers,
-        marks: totalMarks,
-        status: "GRADED",
-        gradedAt: new Date(),
-      },
-    });
+        // Step 6: Merge grades into studentAnswers
+        const finalAnswers = studentAnswers.map((sa: any) => {
+            const graded = gradedAnswers.find((ga: any) => ga.questionId === sa.questionId);
+            if (graded) {
+                return {
+                    ...sa,
+                    studentGrade: graded.studentGrade,
+                    feedback: graded.feedback
+                };
+            }
+            return sa;
+        });
+
+        console.log("Final Answers",finalAnswers);
+
+        // Step 7: Calculate total marks
+        const totalMarks = finalAnswers.reduce((sum: number, q: any) => sum + (q.studentGrade * q.questionGrade || 0), 0);
+        const maxMarks = finalAnswers.reduce((sum: number, q: any) => sum + q.questionGrade, 0);
+
+        console.log(`📊 [Worker] Total Marks: ${totalMarks}/${maxMarks}`);
+
+        // Step 8: Upload to S3
+        console.log('☁️  [Worker] Uploading to S3...');
+        const s3Url = await uploadStudentAnswer(
+            examId,
+            studentUserId,
+           realFileBuffer,
+        );
+        console.log(`✅ [Worker] S3 Upload Complete: ${s3Url}`);
+
+        // Step 9: Save or update submission in DB
+        const submission = await prisma.submission.upsert({
+            where: {
+                studentId_examId: {
+                    studentId: student.id,
+                    examId: examId,
+                },
+            },
+            update: {
+                fileLink: s3Url,
+                originalAnswers: finalAnswers,
+                marks: totalMarks,
+                status: 'GRADED',
+                gradedAt: new Date(),
+                updatedAt: new Date(),
+            },
+            create: {
+                studentId: student.id,
+                examId,
+                fileLink: s3Url,
+                originalAnswers: finalAnswers,
+                marks: totalMarks,
+                status: 'GRADED',
+                gradedAt: new Date(),
+            },
+        });
 
     return {
       success: true,
@@ -222,10 +352,10 @@ async function performMistralOCR(fileBuffer: Buffer, filename: string): Promise<
 
     console.log(`✅ [Worker] OCR completed, ${ocrResponse.pages.length} pages processed`);
 
-    // Step 3: Combine all pages into markdown
-    const fullMarkdown = ocrResponse.pages
-      .map((page: any, index: number) => `--- Page ${index + 1} ---\n${page.markdown}`)
-      .join("\n\n");
+        // Step 3: Combine all pages into markdown (matching Python format exactly)
+        const fullMarkdown = ocrResponse.pages
+            .map((page, index) => `--- Page ${index + 1} ---\n${page.markdown}`)
+            .join("\n\n");
 
     return fullMarkdown;
   } catch (error) {
@@ -236,67 +366,112 @@ async function performMistralOCR(fileBuffer: Buffer, filename: string): Promise<
 
 /**
  * Perform intelligent extraction using Mistral Large
+ * Matches Python implementation exactly
  */
-async function performMistralExtraction(prompt: string): Promise<ScannedExam> {
-  try {
-    console.log("🤖 [Worker] Running Mistral Large extraction...");
-    const mistralClient = getMistralClient();
+async function performMistralExtraction(fullMarkdown: string): Promise<ScannedExam> {
+    try {
+        console.log('🤖 [Worker] Running Mistral Large extraction...');
 
-    const schemaDefinition = {
-      type: "object",
-      properties: {
-        student_info: {
-          type: "object",
-          additionalProperties: { type: "string" },
-        },
-        answers: {
-          type: "array",
-          items: {
+        // Build the smart prompt (exact match to Python)
+        const smartPrompt = `
+You are an exam transcription and structuring assistant (extract-only).
+Your task is to extract the exam into STRICT JSON matching the provided schema.
+
+RULES FOR EXTRACTION:
+1. **Visual Separation**:
+   - Treat **Digital/Printed Text** as the 'Question'.
+   - Treat **Handwritten Text** immediately following it as the 'Student Answer'.
+
+2. **Handling Sub-Questions**:
+   - If a 'Main Question' (e.g., "Question 2") contains bullet points or sub-parts, treat EACH bullet/part as a separate QuestionEntry.
+   - Generate IDs like '2.1', '2.2' (or '2.a', '2.b') for these parts.
+
+3. **Point Distribution Algorithm (CRITICAL)**:
+   - Look for marks assigned to the Main Question (e.g., "[4 Points]" or "[10 Marks]").
+   - Look for marks assigned to specific sub-questions.
+   - **LOGIC**: If the Main Question has a score (e.g., 4) but the sub-questions DO NOT have specific scores, DIVIDE the total equally.
+     * Example: "Question 2 [4 Points]" has 2 bullet points -> Assign **2.0 points** to each.
+     * Example: "Question 1 [10 Marks]" has 10 MCQs -> Assign **1.0 point** to each.
+
+4. **MCQ & T/F**:
+   - Include the full context (Choice Letter + Text) in 'student_answer'.
+
+EXAM CONTENT:
+${fullMarkdown}
+`;
+
+        // Create JSON schema definition matching Python Pydantic model
+        const schemaDefinition = {
             type: "object",
             properties: {
-              questionId: { type: "string" },
-              type: { type: "string" },
-              question: { type: "string" },
-              answer: { type: ["string", "null"] },
-              questionGrade: { type: "number" },
-              studentGrade: { type: ["number", "null"] },
-              feedback: { type: ["string", "null"] },
+                student_info: {
+                    type: "object",
+                    additionalProperties: { type: "string" },
+                    description: "Name, ID, etc."
+                },
+                questions: {
+                    type: "array",
+                    items: {
+                        type: "object",
+                        properties: {
+                            questionId: {
+                                type: "string",
+                                description: "Hierarchical ID (e.g., '2.1', '2.2'). If bullet points, generate IDs like '2.a', '2.b'."
+                            },
+                            type: {
+                                type: "string",
+                                description: "Type: 'MCQ', 'True/False', 'Diagram', or 'Long Answer'"
+                            },
+                            question: {
+                                type: "string",
+                                description: "The digital printed text of the question/sub-question."
+                            },
+                            answer: {
+                                type: "string",
+                                description: "The student's handwritten answer/drawing description."
+                            },
+                            questionGrade: {
+                                type: "number",
+                                description: "Points for this specific sub-question. If calculated, use (Total / Count)."
+                            },
+                            studentGrade: {
+                                type: ["number", "null"],
+                                description: "Must be null during OCR/extraction."
+                            },
+                            feedback: {
+                                type: ["string", "null"],
+                                description: "Must be null during OCR/extraction."
+                            }
+                        },
+                        required: ["questionId", "type", "question", "answer", "questionGrade", "studentGrade", "feedback"],
+                        additionalProperties: false
+                    }
+                }
             },
-            required: [
-              "questionId",
-              "type",
-              "question",
-              "answer",
-              "questionGrade",
-              "studentGrade",
-              "feedback",
-            ],
-            additionalProperties: false,
-          },
-        },
-      },
-      required: ["student_info", "answers"],
-      additionalProperties: false,
-    };
+            required: ["student_info", "questions"],
+            additionalProperties: false
+        };
 
-    const chatResponse = await mistralClient.chat.complete({
-      model: "mistral-large-latest",
-      messages: [{ role: "user", content: prompt }],
-      responseFormat: {
-        type: "json_schema",
-        jsonSchema: {
-          name: "ExamAnswerSchema",
-          strict: true,
-          schemaDefinition,
-        },
-      },
-    });
+        const chatResponse = await mistralClient.chat.complete({
+            model: "mistral-large-latest",
+            messages: [
+                { role: "user", content: smartPrompt }
+            ],
+            responseFormat: {
+                type: "json_schema",
+                jsonSchema: {
+                    name: "SmartExamSchema",
+                    strict: true,
+                    schemaDefinition: schemaDefinition
+                }
+            }
+        });
 
     const content = chatResponse.choices[0].message.content;
     if (!content) throw new Error("No content returned from Mistral");
 
-    const extractedData = JSON.parse(content) as ScannedExam;
-    console.log(`✅ [Worker] Extraction completed, ${extractedData.answers.length} answers extracted`);
+        const extractedData = JSON.parse(content) as ScannedExam;
+        console.log(`✅ [Worker] Extraction completed, ${extractedData.questions.length} questions extracted`);
 
     return extractedData;
   } catch (error) {
@@ -309,7 +484,7 @@ async function performMistralExtraction(prompt: string): Promise<ScannedExam> {
  * Build the Mistral extraction prompt (exact copy from Python script)
  */
 function buildMistralExtractionPrompt(fullMarkdown: string): string {
-  return `
+    return `
 You are an intelligent exam-structuring assistant.
 Your task is to extract the exam into STRICT JSON matching the provided schema.
 DO NOT add extra fields. DO NOT add explanations.

@@ -28,8 +28,8 @@ export async function POST(request: NextRequest) {
     if (!instructor) throw new Error("Instructor not found");
 
     const formData = await request.formData();
-    const examId = formData.get("examId") as string;
-    const autoExtract = formData.get("autoExtract") === "true";
+    const examId = formData.get('examId') as string;
+    const courseName = formData.get('courseName') as string;
 
     if (!examId) throw new Error("Exam ID is required");
 
@@ -56,9 +56,9 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
-        const studentUserId = autoExtract
-          ? extractStudentUserId(file.name)
-          : file.name.replace(/\.pdf$/i, "");
+        const studentUserId = courseName
+            ? extractStudentUserId(file.name)
+            : file.name.replace(/\.pdf$/i, '');
 
         if (!studentUserId) {
           errors.push({ filename: file.name, error: MESSAGES.STUDENT.ID_EXTRACT_FAILED });
@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
           fileBuffer: buffer.toString("base64"),
           filename: file.name,
           instructorId: instructor.id,
-          autoExtract,
+          courseName: courseName,
         };
 
         const job = await pdfQueue.add(

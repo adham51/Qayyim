@@ -6,7 +6,7 @@ const mistralClient = new Mistral({
     apiKey: process.env.MISTRAL_API_KEY || "koirVgJzhrERAjR9OnlIhxWW2jgGgQWP"
 });
 
-// Data schema interface for exam questions
+// Data schema interface for exam questions (model answers)
 interface QuestionEntry {
     questionId: string;
     type: string;
@@ -17,6 +17,80 @@ interface QuestionEntry {
 
 interface ExamQuestions {
     questions: QuestionEntry[];
+}
+
+/**
+ * Extract MCQ choice map from question text
+ * Supports: A. text, B) text, C - text
+ */
+function extractMcqChoiceMap(questionText: string): Record<string, string> {
+    const text = questionText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+    const optionStart = text.search(/(?:^|\n)\s*[A-D]\s*[\.\)\-:]\s+/m);
+    const optionsBlock = optionStart !== -1 ? text.substring(optionStart) : text;
+
+    const pattern = /^\s*([A-D])\s*[\.\)\-:]\s*(.+?)(?=^\s*[A-D]\s*[\.\)\-:]\s+|$)/gms;
+
+    const choices: Record<string, string> = {};
+    let match;
+    while ((match = pattern.exec(optionsBlock)) !== null) {
+        const letter = match[1].toUpperCase();
+        const body = match[2].replace(/\s+/g, ' ').trim();
+        choices[letter] = body;
+    }
+
+    return choices;
+}
+
+/**
+ * Extract MCQ stem (remove options, keep only question)
+ */
+function extractMcqStem(questionText: string): string {
+    const text = questionText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+    const optionStart = text.search(/(?:^|\n)\s*[A-D]\s*[\.\)\-:]\s+/m);
+
+    if (optionStart === -1) {
+        return text.replace(/\s+/g, ' ');
+    }
+
+    const stem = text.substring(0, optionStart).trim();
+    return stem.replace(/\s+/g, ' ');
+}
+
+/**
+ * Normalize exam JSON for model answers:
+ * - Expands MCQ answers from letter to full selected option
+ * - Cleans MCQ question text to stem only
+ * Note: Does NOT add studentGrade/feedback (not needed for model answers)
+ */
+function normalizeExamJson(exam: ExamQuestions): ExamQuestions {
+    const questions = exam.questions.map(q => {
+        const normalized = { ...q };
+
+        if (q.type.toLowerCase() === 'mcq') {
+            const answerLetter = q.answer.trim().toUpperCase();
+
+            if (/^[A-D]$/.test(answerLetter)) {
+                const fullQuestion = q.question;
+                const choices = extractMcqChoiceMap(fullQuestion);
+                const stem = extractMcqStem(fullQuestion);
+
+                if (stem) {
+                    normalized.question = stem;
+                }
+
+                if (choices[answerLetter]) {
+                    normalized.answer = `(${answerLetter}) ${choices[answerLetter]}`;
+                } else {
+                    normalized.answer = `(${answerLetter})`;
+                }
+            }
+        }
+
+        return normalized;
+    });
+
+    return { questions };
 }
 
 export async function POST(req: NextRequest) {
@@ -48,13 +122,15 @@ export async function POST(req: NextRequest) {
 
         console.log(`✅ [API] OCR completed, text length: ${rawExamText.length} characters`);
 
-        // Step 2: Extract questions using Mistral Large
-        const prompt = buildExamExtractionPrompt(rawExamText);
-        const extractedData = await performMistralExtraction(prompt);
+        // Step 2: Extract questions using Mistral Large (matching processPdf logic)
+        const extractedData = await performMistralExtraction(rawExamText);
 
-        console.log(`✅ [API] Extraction completed, ${extractedData.questions.length} questions extracted`);
+        // Step 3: Normalize the data (MCQ expansion, etc.)
+        const normalizedData = normalizeExamJson(extractedData);
 
-        return NextResponse.json(extractedData);
+        console.log(`✅ [API] Extraction completed, ${normalizedData.questions.length} questions extracted`);
+
+        return NextResponse.json(normalizedData);
     } catch (error: any) {
         console.error("❌ Exam Extraction Error:", error);
         return NextResponse.json(
@@ -93,7 +169,7 @@ async function performMistralOCR(fileBuffer: Buffer, filename: string): Promise<
 
         console.log(`✅ [API] OCR completed, ${ocrResponse.pages.length} pages processed`);
 
-        // Step 3: Combine all pages into markdown
+        // Step 3: Combine all pages into markdown (matching Python format exactly)
         const fullMarkdown = ocrResponse.pages
             .map((page, index) => `--- Page ${index + 1} ---\n${page.markdown}`)
             .join("\n\n");
@@ -107,12 +183,46 @@ async function performMistralOCR(fileBuffer: Buffer, filename: string): Promise<
 
 /**
  * Perform intelligent extraction using Mistral Large
+ * Uses the SAME prompt logic as processPdf.ts for consistency
  */
-async function performMistralExtraction(prompt: string): Promise<ExamQuestions> {
+async function performMistralExtraction(fullMarkdown: string): Promise<ExamQuestions> {
     try {
         console.log('🤖 [API] Running Mistral Large extraction...');
 
-        // Create JSON schema for exam questions
+        // Build the smart prompt (exact match to processPdf.ts)
+        const smartPrompt = `
+You are an exam transcription and structuring assistant (extract-only).
+Your task is to extract the exam into STRICT JSON matching the provided schema.
+
+RULES FOR EXTRACTION:
+1. **Visual Separation**:
+   - Treat **Digital/Printed Text** as the 'Question'.
+   - Treat **Handwritten Text** immediately following it as the 'Answer' (model answer for this exam).
+
+2. **Handling Sub-Questions**:
+   - If a 'Main Question' (e.g., "Question 2") contains bullet points or sub-parts, treat EACH bullet/part as a separate QuestionEntry.
+   - Generate IDs like '2.1', '2.2' (or '2.a', '2.b') for these parts.
+
+3. **Point Distribution Algorithm (CRITICAL)**:
+   - Look for marks assigned to the Main Question (e.g., "[4 Points]" or "[10 Marks]").
+   - Look for marks assigned to specific sub-questions.
+   - **LOGIC**: If the Main Question has a score (e.g., 4) but the sub-questions DO NOT have specific scores, DIVIDE the total equally.
+     * Example: "Question 2 [4 Points]" has 2 bullet points -> Assign **2.0 points** to each.
+     * Example: "Question 1 [10 Marks]" has 10 MCQs -> Assign **1.0 point** to each.
+
+4. **MCQ & T/F**:
+   - For MCQ: Extract the answer as just the letter (A, B, C, or D). The normalization will expand it later.
+   - Include the full context (Choice Letter + Text) in the question field for MCQs.
+
+5. **Model Answer Extraction**:
+   - This is a MODEL ANSWER document, so extract the correct/expected answer for each question.
+   - The answer field should contain the instructor's provided answer or solution.
+
+EXAM CONTENT:
+${fullMarkdown}
+`;
+
+        // Create JSON schema definition for model answers
         const schemaDefinition = {
             type: "object",
             properties: {
@@ -121,11 +231,26 @@ async function performMistralExtraction(prompt: string): Promise<ExamQuestions> 
                     items: {
                         type: "object",
                         properties: {
-                            questionId: { type: "string" },
-                            type: { type: "string" },
-                            question: { type: "string" },
-                            questionGrade: { type: "number" },
-                            answer: { type: "string" }
+                            questionId: {
+                                type: "string",
+                                description: "Hierarchical ID (e.g., '2.1', '2.2'). If bullet points, generate IDs like '2.a', '2.b'."
+                            },
+                            type: {
+                                type: "string",
+                                description: "Type: 'MCQ', 'TrueFalse', 'Short Answer', 'Long Answer', etc."
+                            },
+                            question: {
+                                type: "string",
+                                description: "The digital printed text of the question/sub-question."
+                            },
+                            questionGrade: {
+                                type: "number",
+                                description: "Points for this specific sub-question. If calculated, use (Total / Count)."
+                            },
+                            answer: {
+                                type: "string",
+                                description: "The model answer/correct answer for this question."
+                            }
                         },
                         required: ["questionId", "type", "question", "questionGrade", "answer"],
                         additionalProperties: false
@@ -139,7 +264,7 @@ async function performMistralExtraction(prompt: string): Promise<ExamQuestions> 
         const chatResponse = await mistralClient.chat.complete({
             model: "mistral-large-latest",
             messages: [
-                { role: "user", content: prompt }
+                { role: "user", content: smartPrompt }
             ],
             responseFormat: {
                 type: "json_schema",
@@ -164,77 +289,4 @@ async function performMistralExtraction(prompt: string): Promise<ExamQuestions> 
         console.error('❌ Mistral Extraction Error:', error instanceof Error ? error.message : error);
         throw error;
     }
-}
-
-/**
- * Build the exam extraction prompt
- */
-function buildExamExtractionPrompt(fullMarkdown: string): string {
-    return `
-You are an intelligent exam-structuring assistant.
-Your task is to extract the exam into STRICT JSON matching the provided schema.
-DO NOT add extra fields. DO NOT add explanations.
-────────────────────────────────
-CORE EXTRACTION RULES
-────────────────────────────────
-1) Visual Separation:
-   - Printed/digital text → question
-   - Handwritten text immediately following → answer
-2) Each sub-question MUST become a separate entry in \`questions[]\`.
-────────────────────────────────
-QUESTION ID NORMALIZATION (MANDATORY)
-────────────────────────────────
-- If a main question has ANY subparts (labeled OR unlabeled), you MUST NOT create an entry with questionId equal
-  to the parent alone (e.g., "1" or "2"). Output ONLY sub-entries and the first MUST start at ".1".
-  - Question 1 with subparts -> first is "1.1", then "1.2", ...
-  - Question 2 with subparts -> first is "2.1", then "2.2", ...
-
-- Labeled subparts (a/b/c, i/ii/iii, (a)(i), etc.):
-  - Normalize labels into numeric hierarchy (e.g., 2(a)(ii) -> 2.1.2)
-
-- Unlabeled subparts:
-  - If a parent question clearly contains multiple sub-questions but no labels are present,
-    split them and assign synthetic IDs in order like: "3.1", "3.2", "3.3", ...
-
-- Only output a parent-only ID like "3" when the question truly has no subparts (exactly one prompt).
-- Apply these rules to ALL question types (MCQ, TrueFalse, Short-Answer, etc.).
-────────────────────────────────
-GRADING RULES
-────────────────────────────────
-questionGrade:
-- If explicitly stated for the sub-question → use it
-- If only stated for the parent question → divide equally among its immediate subparts
-────────────────────────────────
-MCQ NORMALIZATION (MANDATORY)
-────────────────────────────────
-When type == "MCQ":
-- answer MUST be exactly:
-  "(letter) OptionText"
-- NEVER output only the letter
-- NEVER output only the option text
-────────────────────────────────
-TRUE/FALSE NORMALIZATION
-────────────────────────────────
-When type == "TrueFalse":
-- Normalize to exactly "True" or "False"
-True indicators:
-"true", "t", "yes", "y", "✓", "(✓)", "✔", "v", "2", "L"
-False indicators:
-"false", "f", "no", "n", "✗", "x", "(x)"
-If ambiguous → keep closest raw extracted text
-────────────────────────────────
-MISSING ANSWER HANDLING (MANDATORY)
-────────────────────────────────
-- If a question or sub-question has NO student answer present in the source (no handwritten text, no mark, no selection),
-  you MUST set:
-  answer = null
-- NEVER invent, infer, summarize, or restate an answer.
-- NEVER output an empty string ("") or placeholder text (e.g., "N/A", "Not answered").
-- If an answer is partially visible or unclear, extract the closest raw text that appears.
-────────────────────────────────
-EXAM CONTENT
-────────────────────────────────
-EXAM CONTENT:
-${fullMarkdown}
-`;
 }

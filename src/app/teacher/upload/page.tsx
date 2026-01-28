@@ -117,9 +117,13 @@ export default function UploadSubmissionsPage() {
                 throw new Error(`${MESSAGES.UPLOAD.FILE_TOO_LARGE}. Please remove: ${fileNames}`);
             }
 
+            // Find the selected exam to get courseName
+            const selectedExam = exams.find(exam => exam.id === selectedExamId);
+            const courseName = selectedExam?.courseName || "";
+
             const formData = new FormData();
             formData.append("examId", selectedExamId);
-            formData.append("autoExtract", "true");
+            formData.append("courseName", courseName);
             files.forEach((f) => formData.append("files", f));
 
             const token = localStorage.getItem("token");

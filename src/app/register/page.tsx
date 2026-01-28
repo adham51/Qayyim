@@ -16,7 +16,7 @@ export default function RegisterPage() {
     const [name, setName] = useState("");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
-    const [role, setRole] = useState("STUDENT");
+    const [role, setRole] = useState("student");
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [passwordValidity, setPasswordValidity] = useState({
@@ -49,9 +49,9 @@ export default function RegisterPage() {
             }
 
             // Redirect based on role
-            if (role === "STUDENT") {
-                router.push("/login");
-            } else if (role === "TEACHER") {
+            if (role === "student") {
+                router.push("/student/dashboard");
+            } else if (role === "instructor") {
                 router.push("/teacher/dashboard");
             }
 
@@ -137,8 +137,8 @@ export default function RegisterPage() {
                                 <SelectValue placeholder="Select your role"/>
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="TEACHER">Teacher</SelectItem>
-                                <SelectItem value="STUDENT">Student</SelectItem>
+                                <SelectItem value="instructor">Teacher</SelectItem>
+                                <SelectItem value="student">Student</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>

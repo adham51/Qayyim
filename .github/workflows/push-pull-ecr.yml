@@ -3,8 +3,8 @@ name: CI/CD Pipeline
 on:
   push:
     branches-ignore:
-        - main # Runs when you push to anything other than main!
-  workflow_dispatch: # Allows manual triggering
+        - main
+  workflow_dispatch:
 
 env:
   AWS_REGION: eu-central-1
@@ -44,8 +44,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # 2. AI SERVICE
-      - name: Build & Push AI Service
+      # 2. AI GRADING SERVICE
+      - name: Build & Push AI Grading Service
         uses: docker/build-push-action@v5
         with:
           context: ./ai_grading_service
@@ -57,7 +57,20 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # 3. WORKER
+      # 3. AI UPLOAD SERVICE
+      - name: Build & Push AI Upload Service
+        uses: docker/build-push-action@v5
+        with:
+          context: ./ai_upload_service
+          file: ./ai_upload_service/Dockerfile
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/qayyim-ai-upload:${{ github.sha }}
+            ${{ env.ECR_REGISTRY }}/qayyim-ai-upload:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 4. WORKER
       - name: Build & Push Worker
         uses: docker/build-push-action@v5
         with:
@@ -83,27 +96,20 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          # 1. Pass secrets to server session
           envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_REGION,ECR_REGISTRY
           script: |
-            # Set up credentials
             export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
             export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
             export AWS_DEFAULT_REGION=$AWS_REGION
             
-            # Go to project folder
             cd ~/Qayyim-master
             
-            # Login to ECR
             aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
             
-            # 2. Pull the latest images explicitly
             docker-compose -f docker-compose.prod.yml pull
             
-            # 3. Restart Containers
             docker-compose -f docker-compose.prod.yml up -d --force-recreate --remove-orphans
             
-            # Cleanup
             docker image prune -f
 
         env:

@@ -76,9 +76,7 @@ export async function GET(
       exam: {
         id: exam.id,
         title: exam.title,
-        description: exam.description,
         type: exam.type,
-        deadline: exam.deadline,
         courseCode: exam.course?.courseCode || null,
         courseName: exam.course?.courseName || null,
       },

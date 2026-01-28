@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireRole } from '@/lib/middleware';
 import { successResponse, handleApiError } from '@/lib/api-response';
+import {SectionType, Semester} from "@prisma/client";
 
 export async function GET(request: NextRequest) {
     try {
@@ -26,3 +27,4 @@ export async function GET(request: NextRequest) {
         return handleApiError(error);
     }
 }
+

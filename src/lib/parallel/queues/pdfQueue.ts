@@ -3,12 +3,12 @@ import { Queue } from "bullmq";
 import { createRedisConnection } from "@/lib/parallel/redis";
 
 export interface PdfProcessingJob {
-  examId: string;
-  studentUserId: string;
-  fileBuffer: string;
-  filename: string;
-  instructorId: string;
-  autoExtract: boolean;
+    examId: string;
+    studentUserId: string;
+    fileBuffer: string;
+    filename: string;
+    instructorId: string;
+    courseName: string;
 }
 
 export interface PdfProcessingResult {

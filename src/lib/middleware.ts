@@ -27,6 +27,8 @@ export function requireAuth(request: NextRequest) {
 
 export function requireRole(request: NextRequest, role: 'instructor' | 'student') {
   const user = requireAuth(request);
+
+  console.log("User role: ", user.role);
   if (user.role !== role) {
     throw new Error(`Access denied. ${role} role required.`);
   }

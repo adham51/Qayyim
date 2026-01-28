@@ -4,8 +4,8 @@ export const registerSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   email: z.string().email('Invalid email address'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
-  role: z.enum(['TEACHER', 'STUDENT'], {
-    errorMap: () => ({ message: 'Role must be either TEACHER or STUDENT' })
+  role: z.enum(['instructor', 'student'], {
+    errorMap: () => ({ message: 'Role must be either instructor or student' })
   }),
 });
 
