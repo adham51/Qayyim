@@ -7,7 +7,7 @@ export interface PdfProcessingJob {
     fileBuffer: string;
     filename: string;
     instructorId: string;
-    autoExtract: boolean;
+    courseName: string;
 }
 
 export interface PdfProcessingResult {

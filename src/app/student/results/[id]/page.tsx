@@ -136,9 +136,9 @@ export default function DetailedFeedbackPage({ params }: { params: { id: string 
                 title={`Feedback: ${exam.title}`}
                 description={
                     submission.marks !== null && exam.totalMarks
-                        ? `Your score: ${submission.marks}/${exam.totalMarks} (${percentage}%). Review detailed feedback below.`
+                        ? `Your score: ${(submission.marks).toFixed(2)}/${(exam.totalMarks).toFixed(2)} (${percentage}%). Review detailed feedback below.`
                         : submission.marks !== null
-                            ? `Your score: ${submission.marks}. Review detailed feedback below.`
+                            ? `Your score: ${(submission.marks).toFixed(2)}. Review detailed feedback below.`
                             : 'Your submission is pending grading.'
                 }
             >
@@ -161,7 +161,7 @@ export default function DetailedFeedbackPage({ params }: { params: { id: string 
                             <div>
                                 <p className="text-sm text-muted-foreground">Total Score</p>
                                 <p className={`text-4xl font-bold ${getGradeColor(submission.marks, exam.totalMarks)}`}>
-                                    {submission.marks} / {exam.totalMarks}
+                                    {submission.marks.toFixed(1)} / {exam.totalMarks.toFixed(0)}
                                 </p>
                             </div>
                             <div className="text-right">
@@ -198,7 +198,7 @@ export default function DetailedFeedbackPage({ params }: { params: { id: string 
                         {exam.totalMarks && (
                             <div>
                                 <span className="font-semibold">Total Marks: </span>
-                                <span className="text-muted-foreground">{exam.totalMarks}</span>
+                                <span className="text-muted-foreground">{exam.totalMarks.toFixed(0)}</span>
                             </div>
                         )}
                         {exam.examDate && (
@@ -230,20 +230,32 @@ export default function DetailedFeedbackPage({ params }: { params: { id: string 
                         <div>
                             <span className="font-semibold">Score: </span>
                             <span className="text-muted-foreground">
-                                {submission.marks !== null ? submission.marks : 'Pending'}
+                                {submission.marks !== null ? submission.marks.toFixed(1) : 'Pending'}
                             </span>
                         </div>
                         <div>
                             <span className="font-semibold">Submitted: </span>
                             <span className="text-muted-foreground">
-                                {new Date(submission.submittedAt).toLocaleString()}
+                                {new Date(submission.submittedAt).toLocaleString(undefined, {
+                                    year: 'numeric',
+                                    month: 'numeric',
+                                    day: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit'
+                                })}
                             </span>
                         </div>
                         {submission.gradedAt && (
                             <div>
                                 <span className="font-semibold">Graded: </span>
                                 <span className="text-muted-foreground">
-                                    {new Date(submission.gradedAt).toLocaleString()}
+                                    {new Date(submission.gradedAt).toLocaleString(undefined, {
+                                        year: 'numeric',
+                                        month: 'numeric',
+                                        day: 'numeric',
+                                        hour: '2-digit',
+                                        minute: '2-digit'
+                                    })}
                                 </span>
                             </div>
                         )}
@@ -305,7 +317,7 @@ export default function DetailedFeedbackPage({ params }: { params: { id: string 
                                             </div>
                                             <div className="flex items-center gap-4">
                                                 <span className={`font-bold ${getGradeColor(item.studentGrade * item.questionGrade, item.questionGrade)}`}>
-                                                    {item.studentGrade * item.questionGrade} / {item.questionGrade}
+                                                    {(item.studentGrade * item.questionGrade).toFixed(2)} / {item.questionGrade}
                                                 </span>
                                                 {item.studentGrade === item.questionGrade ? (
                                                     <Check className="h-5 w-5 text-green-600" />
@@ -381,8 +393,8 @@ export default function DetailedFeedbackPage({ params }: { params: { id: string 
                                                 Points Earned
                                             </span>
                                             <span className={`text-lg font-bold ${getGradeColor(item.studentGrade, item.questionGrade)}`}>
-                                                {item.studentGrade.toFixed(2)} / {item.questionGrade}
-                                                ({((item.studentGrade / item.questionGrade) * 100).toFixed(1)}%)
+                                                {(item.studentGrade*item.questionGrade).toFixed(2) } / {item.questionGrade}
+                                                ({(((item.studentGrade*item.questionGrade) / item.questionGrade) * 100).toFixed(1)}%)
                                             </span>
                                         </div>
                                     </AccordionContent>

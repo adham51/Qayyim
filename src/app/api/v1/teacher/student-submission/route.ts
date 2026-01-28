@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
 
     const formData = await request.formData();
     const examId = formData.get('examId') as string;
-    const autoExtract = formData.get('autoExtract') === 'true';
+    const courseName = formData.get('courseName') as string;
 
     if (!examId) {
       throw new Error('Exam ID is required');
@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
-        const studentUserId = autoExtract
+        const studentUserId = courseName
             ? extractStudentUserId(file.name)
             : file.name.replace(/\.pdf$/i, '');
 
@@ -99,7 +99,7 @@ export async function POST(request: NextRequest) {
           fileBuffer: buffer.toString('base64'),  // ✅ ADD THIS LINE
           filename: file.name,
           instructorId: instructor.id,
-          autoExtract,
+          courseName: courseName,
         };
 
         const job = await pdfQueue.add(
