@@ -66,6 +66,29 @@ services:
       redis:
         condition: service_healthy
 
+  ai_upload:
+    build:
+      context: ./ai_upload_service
+      dockerfile: Dockerfile
+    container_name: ai_upload_container
+    restart: always
+    ports:
+      - "5003:5003"
+    environment:
+      - API_HOST=0.0.0.0
+      - API_PORT=5003
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    volumes:
+      - ./ai_upload_service/uploads:/app/uploads
+      - ./ai_upload_service/vector_store:/app/vector_store
+      - ./ai_upload_service/.env:/app/.env
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   app:
     build:
       context: .
@@ -83,11 +106,13 @@ services:
         condition: service_healthy
       ai_grading:
         condition: service_started
+      ai_upload:
+        condition: service_started
 
   worker:
     build:
       context: .
-      dockerfile: Dockerfile.worker  # Your worker Dockerfile
+      dockerfile: Dockerfile.worker
     container_name: pdf_worker_qayim
     restart: always
     env_file:
@@ -101,6 +126,8 @@ services:
       redis:
         condition: service_healthy
       ai_grading:
+        condition: service_started
+      ai_upload:
         condition: service_started
     environment:
       - NODE_ENV=production
