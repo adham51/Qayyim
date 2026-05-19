@@ -4,6 +4,10 @@
 
 ## 📖 Overview
 
+Qayyim (قَيِّمْ) is designed to revolutionize the traditional academic evaluation process by dramatically reducing the time and manual effort required for grading. By bridging complex AI processing with an intuitive, user-friendly dashboard.
+
+For students, the platform provides a transparent and accessible environment to submit answers, track their performance over time, and receive actionable, AI-driven feedback. Built with modern web technologies, secure authentication, and a scalable database architecture, Qayyim ensures a fair, consistent, and highly efficient testing experience for modern educational institutions.
+
 
 ## ✨ Features
 
@@ -23,6 +27,8 @@
 - **Grade Tracking**: View grades and detailed feedback
 - **Performance Analytics**: Track progress over time
 - **Results History**: Access all past exam results
+
+![Qayyim System Architecture](architecture.png)
 
 ## 🛠️ Tech Stack
 
@@ -166,14 +172,4 @@ Qayyim-master/
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-## 📄 License
 
-This project is licensed under the MIT License.
-
-## 📧 Contact
-
-For questions or support, please contact the development team.
-
----
-
-**Built with ❤️ for educators and students**
