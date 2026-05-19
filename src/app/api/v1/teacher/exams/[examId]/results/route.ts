@@ -8,18 +8,35 @@ export async function GET(
   { params }: { params: { examId: string } }
 ) {
   try {
-    const authUser = requireRole(request, 'TEACHER');
+    const authUser = requireRole(request, 'instructor');
+    
+    // Get instructor
+    const instructor = await prisma.instructor.findUnique({
+      where: { userId: authUser.userId },
+    });
+    
+    if (!instructor) {
+      throw new Error('Instructor profile not found');
+    }
     
     // Verify exam ownership
     const exam = await prisma.exam.findUnique({
       where: { id: params.examId },
+      include: {
+        course: {
+          select: {
+            courseCode: true,
+            courseName: true,
+          },
+        },
+      },
     });
     
     if (!exam) {
       return errorResponse('Exam not found', 404);
     }
     
-    if (exam.teacherId !== authUser.userId) {
+    if (exam.instructorId !== instructor.id) {
       return errorResponse('Access denied. You do not own this exam.', 403);
     }
     
@@ -28,10 +45,13 @@ export async function GET(
       where: { examId: params.examId },
       include: {
         student: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
+          include: {
+            user: {
+              select: {
+                name: true,
+                email: true,
+              },
+            },
           },
         },
       },
@@ -41,21 +61,25 @@ export async function GET(
     // Transform to match frontend expectations
     const transformedSubmissions = submissions.map(sub => ({
       id: sub.id,
-      studentName: sub.student.name,
+      studentName: sub.student.user.name,
       studentId: sub.student.id,
-      studentEmail: sub.student.email,
+      studentEmail: sub.student.user.email,
       examId: sub.examId,
-      marks: sub.marks || 0,
-      matchPercentage: sub.matchPercentage || 0,
+      marks: sub.marks,
       feedback: sub.feedback || '',
       status: sub.status,
-      originalAnswer: sub.originalAnswer,
       gradedAt: sub.gradedAt,
       createdAt: sub.createdAt,
     }));
     
     return successResponse({
-      exam,
+      exam: {
+        id: exam.id,
+        title: exam.title,
+        type: exam.type,
+        courseCode: exam.course?.courseCode || null,
+        courseName: exam.course?.courseName || null,
+      },
       submissions: transformedSubmissions,
     });
   } catch (error) {

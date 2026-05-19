@@ -42,15 +42,17 @@ export default function LoginPage() {
             // Get role from correct path: response.data.user.role (not response.data.role)
             const userRole = response.data?.user?.role;
 
+            console.log("userRole:", userRole);
+
             if (!userRole) {
                 setError("Unable to determine user role.");
                 return;
             }
 
             // Redirect based on role
-            if (userRole === "STUDENT") {
+            if (userRole === "student") {
                 router.push("/student/dashboard");
-            } else if (userRole === "TEACHER") {
+            } else if (userRole === "instructor") {
                 router.push("/teacher/dashboard");
             } else {
                 setError("Invalid user role.");

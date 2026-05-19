@@ -7,7 +7,7 @@ const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 export interface JWTPayload {
   userId: string;
   email: string;
-  role: 'TEACHER' | 'STUDENT';
+  role: 'instructor' | 'student';
 }
 
 export function generateToken(payload: JWTPayload): string {

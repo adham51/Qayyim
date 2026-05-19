@@ -5,21 +5,31 @@ import { successResponse, handleApiError } from '@/lib/api-response';
 
 export async function GET(request: NextRequest) {
   try {
-    const authUser = requireRole(request, 'TEACHER');
+    const authUser = requireRole(request, 'instructor');
+
+    console.log(authUser);
+
+    const instructor = await prisma.instructor.findUnique({
+      where: { userId: authUser.userId }  // Find instructor by User ID
+    });
+
+    if (!instructor) {
+      throw new Error('Instructor profile not found');
+    }
     
     // Get statistics
     const [totalExams, totalSubmissions, pendingSubmissions] = await Promise.all([
       prisma.exam.count({
-        where: { teacherId: authUser.userId },
+        where: { instructorId: instructor.id },
       }),
       prisma.submission.count({
         where: {
-          exam: { teacherId: authUser.userId },
+          exam: { instructorId: instructor.id },
         },
       }),
       prisma.submission.count({
         where: {
-          exam: { teacherId: authUser.userId },
+          exam: { instructorId: instructor.id },
           status: 'PENDING',
         },
       }),
@@ -27,7 +37,7 @@ export async function GET(request: NextRequest) {
     
     // Get recent exams
     const recentExams = await prisma.exam.findMany({
-      where: { teacherId: authUser.userId },
+      where: { instructorId: instructor.id },
       take: 5,
       orderBy: { createdAt: 'desc' },
       include: {
@@ -42,12 +52,12 @@ export async function GET(request: NextRequest) {
     // Get grade distribution
     const allSubmissions = await prisma.submission.findMany({
       where: {
-        exam: { teacherId: authUser.userId },
+        exam: { instructorId: instructor.id },
         status: 'GRADED',
-        score: { not: null },
+        marks: { not: null },
       },
       select: {
-        score: true,
+        marks: true,
       },
     });
     
@@ -60,11 +70,11 @@ export async function GET(request: NextRequest) {
     };
     
     allSubmissions.forEach(sub => {
-      if (sub.score === null) return;
-      if (sub.score >= 90) gradeDistribution.A++;
-      else if (sub.score >= 80) gradeDistribution.B++;
-      else if (sub.score >= 70) gradeDistribution.C++;
-      else if (sub.score >= 60) gradeDistribution.D++;
+      if (sub.marks === null) return;
+      if (sub.marks >= 90) gradeDistribution.A++;
+      else if (sub.marks >= 80) gradeDistribution.B++;
+      else if (sub.marks >= 70) gradeDistribution.C++;
+      else if (sub.marks >= 60) gradeDistribution.D++;
       else gradeDistribution.F++;
     });
     

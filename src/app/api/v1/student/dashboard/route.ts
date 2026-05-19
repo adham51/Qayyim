@@ -5,7 +5,7 @@ import { successResponse, handleApiError } from '@/lib/api-response';
 
 export async function GET(request: NextRequest) {
   try {
-    const authUser = requireRole(request, 'STUDENT');
+    const authUser = requireRole(request, 'student');
 
     const student = await prisma.student.findUnique({
       where:{
@@ -41,7 +41,6 @@ export async function GET(request: NextRequest) {
       where: {
         studentId: student.id,
         status: 'GRADED',
-        marks: { not: null },
       },
       orderBy: { gradedAt: 'asc' },
       include: {

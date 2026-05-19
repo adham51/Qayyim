@@ -11,6 +11,15 @@ export async function GET(
   try {
     const authUser = requireRole(request, 'TEACHER');
     
+    // Get instructor
+    const instructor = await prisma.instructor.findUnique({
+      where: { userId: authUser.userId },
+    });
+    
+    if (!instructor) {
+      throw new Error('Instructor profile not found');
+    }
+    
     // Verify exam ownership
     const exam = await prisma.exam.findUnique({
       where: { id: params.examId },
@@ -20,7 +29,7 @@ export async function GET(
       return errorResponse('Exam not found', 404);
     }
     
-    if (exam.teacherId !== authUser.userId) {
+    if (exam.instructorId !== instructor.id) {
       return errorResponse('Access denied. You do not own this exam.', 403);
     }
     
@@ -29,9 +38,13 @@ export async function GET(
       where: { examId: params.examId },
       include: {
         student: {
-          select: {
-            id: true,
-            name: true,
+          include: {
+            user: {
+              select: {
+                name: true,
+                email: true,
+              },
+            },
           },
         },
       },
@@ -40,11 +53,10 @@ export async function GET(
     
     // Transform data for CSV
     const results = submissions.map(sub => ({
-      studentName: sub.student.name,
+      studentName: sub.student.user.name,
       studentId: sub.student.id,
-      studentEmail: sub.student.email,
+      studentEmail: sub.student.user.email,
       marks: sub.marks || 0,
-      matchPercentage: sub.matchPercentage || 0,
       feedback: sub.feedback || '',
       status: sub.status,
       submittedAt: sub.createdAt.toISOString(),

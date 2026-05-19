@@ -1,0 +1,18 @@
+FROM node:20-alpine
+WORKDIR /app
+
+# Install dependencies
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# Copy source code
+COPY . .
+
+# Generate Prisma Client
+RUN npx prisma generate
+
+# Install tsx globally for running TypeScript
+RUN npm install -g tsx
+
+# Run the worker
+CMD sh -c "npx prisma migrate deploy && tsx src/app/workers/startPdfWorker.ts"

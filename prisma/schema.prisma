@@ -38,43 +38,44 @@ model Student {
   user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   submissions Submission[]
   courses     Course[]     @relation("CourseStudents")
+  grievances  Grievance[]
 
   @@map("students")
 }
 
 model Course {
-  id            String      @id @default(cuid())
-  courseCode    String
-  courseName    String
-  sectionType   SectionType
-  sectionNumber String
-  academicYear  String
-  semester      Semester
-  isActive      Boolean     @default(true)
-
+  id              String       @id @default(cuid())
+  courseCode      String
+  enrollmentToken String?      @unique @default(uuid())
+  courseName      String
+  sectionType     SectionType
+  sectionNumber   String
+  academicYear    String
+  semester        Semester
+  isActive        Boolean      @default(true)
   // Relations
-  instructors Instructor[] @relation("CourseInstructors")
-  students    Student[]    @relation("CourseStudents")
-  exams       Exam[]       @relation("CourseExams")
+  instructors     Instructor[] @relation("CourseInstructors")
+  students        Student[]    @relation("CourseStudents")
+  exams           Exam[]       @relation("CourseExams")
 
-  @@unique([sectionType, academicYear, semester, sectionNumber])
+  @@unique([courseCode, sectionType, academicYear, semester, sectionNumber])
   @@map("courses")
 }
 
 model Exam {
   id              String    @id @default(cuid())
   title           String
-  description     String?   @db.Text
+  // description     String?   @db.Text
   duration        Int?      @db.UnsignedInt
-  totalMarks      Int?      @db.UnsignedInt
+  // totalMarks      Int?      @db.UnsignedInt
   questions       Json? // {question, model_answer, points, type}
   type            ExamType
-  deadline        DateTime?
-  modelAnswer     String?   @db.Text
-  rubric          String?   @db.Text
-  rubricLink      String?
+  examDate        DateTime?
+  // modelAnswer     String?   @db.Text
+  // rubric          String?   @db.Text
+  // rubricLink      String?
   modelAnswerFile String?
-  rubricFile      String?
+  // rubricFile      String?
   isActive        Boolean   @default(true)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -83,6 +84,7 @@ model Exam {
   instructorId String
   instructor   Instructor   @relation(fields: [instructorId], references: [id], onDelete: Cascade)
   submissions  Submission[]
+  grievances   Grievance[]
   courseId     String?
   course       Course?      @relation("CourseExams", fields: [courseId], references: [id], onDelete: SetNull)
 
@@ -94,9 +96,9 @@ model Exam {
 
 model Submission {
   id              String           @id @default(cuid())
-  originalAnswers Json // {answer, points}
-  marks           Int?             @db.UnsignedInt
-  feedback        String?          @db.Text
+  originalAnswers Json
+  marks           Float?           @db.Double
+  // feedback        String?          @db.Text
   status          SubmissionStatus @default(PENDING)
   gradedAt        DateTime?
   createdAt       DateTime         @default(now())
@@ -105,9 +107,10 @@ model Submission {
 
   // Relations
   studentId String
-  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  student   Student    @relation(fields: [studentId], references: [id], onDelete: Cascade)
   examId    String
-  exam      Exam    @relation(fields: [examId], references: [id], onDelete: Cascade)
+  exam      Exam       @relation(fields: [examId], references: [id], onDelete: Cascade)
+  grievance Grievance?
 
   @@unique([studentId, examId])
   @@index([studentId])
@@ -115,6 +118,32 @@ model Submission {
   @@index([status])
   @@index([gradedAt])
   @@map("submissions")
+}
+
+model Grievance {
+  id                 String          @id @default(cuid())
+  grievanceType      GrievanceType
+  questionNumber     Int?
+  description        String          @db.Text
+  status             GrievanceStatus @default(PENDING)
+  instructorResponse String?         @db.Text
+  createdAt          DateTime        @default(now())
+  reviewedAt         DateTime?
+  resolvedAt         DateTime?
+
+  // Relations
+  studentId    String
+  student      Student    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  examId       String
+  exam         Exam       @relation(fields: [examId], references: [id], onDelete: Cascade)
+  submissionId String     @unique
+  submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+  @@index([examId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("grievances")
 }
 
 enum ExamType {
@@ -139,4 +168,18 @@ enum Semester {
   FALL
   SPRING
   SUMMER
+}
+
+enum GrievanceType {
+  SCORE_DISAGREEMENT
+  INCORRECT_FEEDBACK
+  MISSING_ANSWER
+  OTHER
+}
+
+enum GrievanceStatus {
+  PENDING
+  UNDER_REVIEW
+  RESOLVED
+  REJECTED
 }

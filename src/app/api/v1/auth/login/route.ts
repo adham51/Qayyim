@@ -28,14 +28,14 @@ export async function POST(request: NextRequest) {
     }
     
     // Determine role by checking Instructor or Student record
-    let role: "TEACHER" | "STUDENT"= "STUDENT";
+    let role = null;
     const instructor = await prisma.instructor.findUnique({ where: { userId: user.id } });
     if (instructor) {
-      role = "TEACHER";
+      role = "instructor";
     } else {
       const student = await prisma.student.findUnique({ where: { userId: user.id } });
       if (student) {
-        role = "STUDENT";
+        role = "student";
       }
     }
 

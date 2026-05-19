@@ -1,72 +1,64 @@
+import { getPdfQueue } from "@/lib/parallel/queues/pdfQueue";
+import { NextRequest } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireRole } from "@/lib/middleware";
+import { successResponse, handleApiError } from "@/lib/api-response";
+import { FILE_UPLOAD, MESSAGES } from "@/lib/constants";
+import { uploadStudentAnswer } from "@/lib/s3";
+
 export const runtime = "nodejs";
 
-import { NextRequest } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import { requireRole } from '@/lib/middleware';
-import { successResponse, handleApiError } from '@/lib/api-response';
-import { uploadStudentAnswer } from '@/lib/s3';
-import { FILE_UPLOAD, MESSAGES } from '@/lib/constants';
-
-/**
- * Extracts the user ID from the filename.
- * Files should be named as: {user_id}.pdf (e.g., cmhfemzzt00057kicoeo82gdz.pdf)
- * This is the User.id (not Student.id) since we search by userId in the Student table.
- */
 function extractStudentUserId(filename: string): string | null {
-  const nameWithoutExt = filename.replace(/\.pdf$/i, '');
+  const nameWithoutExt = filename.replace(/\.pdf$/i, "");
   return nameWithoutExt || null;
 }
 
 export async function POST(request: NextRequest) {
+  // ✅ init queue ONLY at runtime (not at import/build time)
+  const pdfQueue = getPdfQueue();
+
   try {
-    const authUser = requireRole(request, 'TEACHER');
+    console.log("📥 Received POST request for PDF processing");
+
+    const authUser = requireRole(request, "instructor");
     const instructor = await prisma.instructor.findUnique({
-      where: { userId: authUser.userId }
+      where: { userId: authUser.userId },
     });
 
-    if (!instructor) {
-      throw new Error('Instructor not found');
-    }
+    if (!instructor) throw new Error("Instructor not found");
 
     const formData = await request.formData();
-    
     const examId = formData.get('examId') as string;
-    const autoExtract = formData.get('autoExtract') === 'true';
-    const files = formData.getAll('files') as File[];
+    const courseName = formData.get('courseName') as string;
 
-    if (!examId || files.length === 0) {
-      throw new Error('Exam ID and files are required');
-    }
+    if (!examId) throw new Error("Exam ID is required");
 
     const exam = await prisma.exam.findUnique({ where: { id: examId } });
     if (!exam || exam.instructorId !== instructor.id) {
-      throw new Error('Exam not found or access denied');
+      throw new Error("Exam not found or access denied");
     }
 
-    const results: any[] = [];
+    const singleFile = formData.get("file") as File | null;
+    const multipleFiles = formData.getAll("files") as File[];
+    const files = singleFile ? [singleFile] : multipleFiles;
+
+    if (files.length === 0) throw new Error("At least one file is required");
+
+    const queuedJobs: any[] = [];
     const errors: any[] = [];
 
     for (const file of files) {
       try {
-        // Validate file type
+        console.log(`\n🔍 Validating file: ${file.name}`);
+
         if (file.type !== FILE_UPLOAD.ALLOWED_TYPES.PDF) {
           errors.push({ filename: file.name, error: MESSAGES.UPLOAD.INVALID_TYPE });
           continue;
         }
-        
-        // Validate file size
-        if (file.size > FILE_UPLOAD.MAX_FILE_SIZE) {
-          const sizeMB = (file.size / 1024 / 1024).toFixed(2);
-          errors.push({ 
-            filename: file.name, 
-            error: `${MESSAGES.UPLOAD.FILE_TOO_LARGE} (File size: ${sizeMB}MB)` 
-          });
-          continue;
-        }
 
-        const studentUserId = autoExtract
-          ? extractStudentUserId(file.name)
-          : file.name.replace(/\.pdf$/i, '');
+        const studentUserId = courseName
+            ? extractStudentUserId(file.name)
+            : file.name.replace(/\.pdf$/i, '');
 
         if (!studentUserId) {
           errors.push({ filename: file.name, error: MESSAGES.STUDENT.ID_EXTRACT_FAILED });
@@ -82,49 +74,106 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
-        const buffer = Buffer.from(await file.arrayBuffer());
+        console.log(`🛠️ Converting ${file.name} to Buffer...`);
+        const arrayBuffer = await file.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+
+        console.log(`📤 Uploading to S3...`);
         const s3Url = await uploadStudentAnswer(examId, studentUserId, buffer);
+        console.log(`✅ S3 Success: ${s3Url}`);
 
-        // FIXED: Use upsert to handle both create and update
-        await prisma.submission.upsert({
-          where: {
-            studentId_examId: {
-              studentId: student.id,
-              examId: examId,
-            },
-          },
-          update: {
-            fileLink: s3Url,
-            status: 'PENDING',
-            marks: null,
-            feedback: null,
-            gradedAt: null,
-            updatedAt: new Date(),
-          },
-          create: {
-            studentId: student.id,
-            examId,
-            fileLink: s3Url,
-            originalAnswers: {},
-            status: 'PENDING',
-          },
-        });
-
-        results.push({
+        const jobData = {
+          examId,
           studentUserId,
+          fileBuffer: buffer.toString("base64"),
           filename: file.name,
-          s3Url,
-        });
+          instructorId: instructor.id,
+          courseName: courseName,
+        };
 
-      } catch (err: any) {
-        errors.push({ filename: file.name, error: err.message });
+        const job = await pdfQueue.add(
+          `process-${studentUserId}-${Date.now()}`,
+          jobData,
+          {
+            priority: 1,
+            attempts: 3,
+            backoff: { type: "exponential", delay: 2000 },
+          }
+        );
+
+        console.log(`🚀 Job queued: ${job.id}`);
+
+        queuedJobs.push({
+          jobId: job.id,
+          filename: file.name,
+          studentUserId,
+          s3Url,
+          status: "queued",
+        });
+      } catch (error: any) {
+        console.error(`❌ Error processing ${file.name}:`, error);
+        errors.push({ filename: file.name, error: error.message });
       }
     }
 
-    return successResponse(
-      { uploaded: results.length, failed: errors.length, results, errors },
-      `Uploaded ${results.length} files to S3`
+    const [waiting, active, completed, failed] = await Promise.all([
+      pdfQueue.getWaitingCount(),
+      pdfQueue.getActiveCount(),
+      pdfQueue.getCompletedCount(),
+      pdfQueue.getFailedCount(),
+    ]);
+
+    console.log(
+      `📊 Final Queue Status: waiting=${waiting}, active=${active}, completed=${completed}, failed=${failed}`
     );
+
+    return successResponse(
+      {
+        queued: queuedJobs.length,
+        failed: errors.length,
+        jobs: queuedJobs,
+        errors,
+      },
+      `Queued ${queuedJobs.length} submissions`
+    );
+  } catch (error) {
+    console.error("❌ Route error:", error);
+    return handleApiError(error);
+  }
+}
+
+export async function GET(request: NextRequest) {
+  // ✅ init queue ONLY at runtime (not at import/build time)
+  const pdfQueue = getPdfQueue();
+
+  try {
+    requireRole(request, "instructor");
+    const { searchParams } = new URL(request.url);
+    const jobId = searchParams.get("jobId");
+
+    if (!jobId) {
+      const [waiting, active, completed, failed] = await Promise.all([
+        pdfQueue.getWaitingCount(),
+        pdfQueue.getActiveCount(),
+        pdfQueue.getCompletedCount(),
+        pdfQueue.getFailedCount(),
+      ]);
+
+      return successResponse({
+        queue: { waiting, active, completed, failed, total: waiting + active + completed + failed },
+      });
+    }
+
+    const job = await pdfQueue.getJob(jobId);
+    if (!job) return successResponse({ jobId, status: "not_found" }, "Job not found", 404);
+
+    return successResponse({
+      jobId: job.id,
+      status: await job.getState(),
+      progress: job.progress,
+      result: job.returnvalue,
+      failedReason: job.failedReason,
+    });
   } catch (error) {
     return handleApiError(error);
   }

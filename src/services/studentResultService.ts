@@ -1,4 +1,10 @@
-import {StudentResultsResponse, SubmissionDetail, SubmissionResult} from '@/types/student-results';
+import {
+    Course,
+    CourseContent,
+    StudentResultsResponse,
+    SubmissionDetail,
+    SubmissionResult
+} from '@/types/student-results';
 
 /**
  * Fetches student results including statistics, recently graded submissions, and score trends
@@ -106,6 +112,68 @@ export async function getSubmissionDetail(examId: string): Promise<SubmissionDet
         return data.data;
     } catch (error) {
         console.error('Error fetching submission detail:', error);
+        throw error;
+    }
+}
+
+export async function getStudentCourses(): Promise<Course[]>{
+    try{
+        const token = localStorage.getItem('token');
+
+        if (!token) {
+            throw new Error('No authentication token found. Please log in.');
+        }
+
+        const response = await fetch('/api/v1/student/courses', {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+            },
+            credentials: 'include',
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(
+                errorData.message || `Failed to fetch student courses: ${response.status}`
+            );
+        }
+
+        const data = await response.json();
+        return data.data;
+    }catch(error){
+        console.error('Error fetching student courses:', error);
+        throw error;
+    }
+}
+
+export async function getCourceContent(courseId: string): Promise<CourseContent> {
+    try {
+        const token = localStorage.getItem('token');
+
+        if (!token) {
+            throw new Error('Authentication required. Please log in.');
+        }
+
+        const response = await fetch(`/api/v1/student/courses/${courseId}`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+            },
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.message || `Error ${response.status}: Failed to load course`);
+        }
+
+        const result = await response.json();
+
+        return result.data;
+    } catch (error) {
+        console.error('Failed to get course content:', error);
         throw error;
     }
 }

@@ -1,0 +1,12 @@
+flask
+flask-cors
+python-dotenv
+huggingface_hub
+langchain-chroma
+langchain-huggingface
+langchain-community
+langchain-openai
+sentence-transformers
+chromadb
+pypdf
+torch==2.5.1+cpu

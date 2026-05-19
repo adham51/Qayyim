@@ -48,12 +48,12 @@ export async function POST(request: NextRequest) {
         });
 
         // Create Instructor or Student record based on role
-        const role: "TEACHER" | "STUDENT" = validatedData.role;
-        if (role === "TEACHER") {
+        const role: "instructor" | "student" = validatedData.role;
+        if (role === "instructor") {
             await prisma.instructor.create({
                 data: { userId: user.id }
             });
-        } else if (role === "STUDENT") {
+        } else if (role === "student") {
             await prisma.student.create({
                 data: { userId: user.id }
             });

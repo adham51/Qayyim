@@ -4,12 +4,33 @@ services:
     container_name: mysql_db_qayim
     restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: Jeffxddowdowdow1234   # Match the password in your .env
-      MYSQL_DATABASE: qayyim_db                   # Set this to the same value as in your .env (qayyim_db)
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: qayyim_db
     ports:
-      - "3307:3306"  # Port 3307 on host to 3306 in container
+      - "3307:3306"
     volumes:
-      - mysql_data2:/var/lib/mysql
+      - mysql_data:/var/lib/mysql
+      - ./init-db:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis_qayim
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   phpmyadmin:
     image: phpmyadmin/phpmyadmin
@@ -17,12 +38,102 @@ services:
     restart: always
     environment:
       PMA_HOST: mysql
-      PMA_USER: root                           # Match the user in your .env (root or user)
-      PMA_PASSWORD: Jeffxddowdowdow1234           # Password from your .env
+      PMA_USER: root
+      PMA_PASSWORD: ${MYSQL_ROOT_PASSWORD}
     ports:
-      - "8080:80"  # Access phpMyAdmin on localhost:8080
+      - "9000:80"
     depends_on:
-      - mysql
+      mysql:
+        condition: service_healthy
+
+  ai_grading:
+    build:
+      context: ./ai_grading_service
+      dockerfile: Dockerfile
+    container_name: ai_grading_container
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      - API_HOST=0.0.0.0
+      - API_PORT=5000
+    volumes:
+      - ./ai_grading_service/chroma_db:/app/chroma_db
+      - ./ai_grading_service/.env:/app/.env
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  ai_upload:
+    build:
+      context: ./ai_upload_service
+      dockerfile: Dockerfile
+    container_name: ai_upload_container
+    restart: always
+    ports:
+      - "5003:5003"
+    environment:
+      - API_HOST=0.0.0.0
+      - API_PORT=5003
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    volumes:
+      - ./ai_upload_service/uploads:/app/uploads
+      - ./ai_upload_service/vector_store:/app/vector_store
+      - ./ai_upload_service/.env:/app/.env
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nextjs_app_qayim
+    restart: always
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ai_grading:
+        condition: service_started
+      ai_upload:
+        condition: service_started
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: pdf_worker_qayim
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src
+      - ./prisma:/app/prisma
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ai_grading:
+        condition: service_started
+      ai_upload:
+        condition: service_started
+    environment:
+      - NODE_ENV=production
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
 
 volumes:
-  mysql_data2:
+  mysql_data:
+  redis_data:
