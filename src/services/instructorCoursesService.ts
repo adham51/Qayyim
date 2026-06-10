@@ -96,7 +96,7 @@ export async function uploadReference(file: File, subject: string) {
         formData.append('file', file);
         formData.append('subject', subject);
 
-        const response = await fetch('http://localhost:5003/upload_reference',
+        const response = await fetch('http://ai_upload:5003/upload_reference',
             {
                 method: 'POST',
                 body: formData

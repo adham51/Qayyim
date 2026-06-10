@@ -38,7 +38,7 @@ export function getPdfQueue() {
 
   const redisConnection = createRedisConnection(); // lazyConnect in redis.ts prevents build-time connect
 
-  pdfQueue = new Queue<PdfProcessingJob>("pdf-processing", {
+  pdfQueue = new Queue<PdfProcessingJob>("{pdf-processing}", {
     connection: redisConnection,
     defaultJobOptions: {
       attempts: 3,

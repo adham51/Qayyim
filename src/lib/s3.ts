@@ -2,11 +2,8 @@ import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const s3Client = new S3Client({
-  region: process.env.AWS_REGION!,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
-  },
+  region: process.env.AWS_REGION ?? 'eu-central-1',
+  // No credentials block — SDK auto-uses IAM role
 });
 
 const BUCKET_NAME = process.env.AWS_S3_BUCKET_NAME!;
