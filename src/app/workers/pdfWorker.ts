@@ -19,7 +19,7 @@ console.log('🔍 Creating worker with concurrency: 4');
 
 // Create worker with concurrency of 4
 export const pdfWorker = new Worker<PdfProcessingJob, PdfProcessingResult>(
-    'pdf-processing',
+    '{pdf-processing}',
     async (job: Job<PdfProcessingJob>) => {
         console.log(`📄 Worker [${job.id}] processing: ${job.data.filename}`);
 

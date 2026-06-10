@@ -39,3 +39,15 @@ export const createRedisConnection = () => {
 // ⛔ REMOVE eager default connection (this was the build-time bug)
 // export const redisConnection = createRedisConnection();
 // export default redisConnection;
+
+// Singleton pattern: cache Redis connection
+let redisInstance: Redis | null = null;
+
+export const getRedisClient = async (): Promise<Redis> => {
+  if (!redisInstance) {
+    redisInstance = createRedisConnection();
+    // Ensure connection is established
+    await redisInstance.connect();
+  }
+  return redisInstance;
+};

@@ -235,6 +235,11 @@ export async function processPdfSubmission(
         }
 
         const gradedAnswers = qwenResult.graded_answers;
+        
+        if (!gradedAnswers) {
+            console.error("❌ [Worker] Qwen response missing 'graded_answers' field. Full response:", qwenResult);
+            throw new Error(`Invalid response from Qwen grading server. Expected 'graded_answers' field. Received: ${JSON.stringify(qwenResult)}`);
+        }
 
         // Step 6: Merge grades into studentAnswers
         const finalAnswers = studentAnswers.map((sa: any) => {
@@ -452,6 +457,7 @@ ${fullMarkdown}
             additionalProperties: false
         };
 
+        const mistralClient = getMistralClient();
         const chatResponse = await mistralClient.chat.complete({
             model: "mistral-large-latest",
             messages: [

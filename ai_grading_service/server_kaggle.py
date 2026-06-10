@@ -94,7 +94,7 @@ class KaggleClient:
             raise
 
 # Initialize Kaggle client with your ngrok URL
-client = KaggleClient("https://cursed-nonapparently-digna.ngrok-free.dev")
+client = KaggleClient("https://unvacillating-gita-lowliest.ngrok-free.dev")
 print("✅ Connected to Kaggle API")
 
 # Load Vector DB
